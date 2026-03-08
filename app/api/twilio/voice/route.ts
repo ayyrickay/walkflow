@@ -42,6 +42,7 @@ export async function POST(request: Request) {
   <Connect>
     <ConversationRelay url="${websocketUrl}" />
   </Connect>
+  <Hangup />
 </Response>`;
 
   return new NextResponse(twiml, {

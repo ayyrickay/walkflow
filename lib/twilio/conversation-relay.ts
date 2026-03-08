@@ -103,6 +103,11 @@ export type RelayTextTokenMessage = {
   last: boolean;
 };
 
+export type RelayEndSessionMessage = {
+  type: "end";
+  handoffData?: string;
+};
+
 export function buildRelayTextTokenMessages(text: string): RelayTextTokenMessage[] {
   const normalized = text.trim();
   if (!normalized) {
@@ -116,4 +121,15 @@ export function buildRelayTextTokenMessages(text: string): RelayTextTokenMessage
     token,
     last: index === tokens.length - 1
   }));
+}
+
+export function buildRelayEndSessionMessage(handoffData?: Record<string, unknown>): RelayEndSessionMessage {
+  if (!handoffData) {
+    return { type: "end" };
+  }
+
+  return {
+    type: "end",
+    handoffData: JSON.stringify(handoffData)
+  };
 }

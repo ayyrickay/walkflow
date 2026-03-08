@@ -81,6 +81,37 @@ async function main() {
   );
   const targetUserId = demoUserId;
 
+  const repositories = [
+    { id: "repo-001", owner: "walkflow", name: "web", defaultBranch: "main" },
+    { id: "repo-002", owner: "walkflow", name: "voice", defaultBranch: "main" },
+    { id: "repo-003", owner: "ricky", name: "circulating-magazines", defaultBranch: "main" }
+  ];
+
+  for (const repository of repositories) {
+    await client.execute(`
+      INSERT INTO repositories (
+        id, user_id, provider, owner, name, default_branch, is_active, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        user_id=excluded.user_id,
+        provider=excluded.provider,
+        owner=excluded.owner,
+        name=excluded.name,
+        default_branch=excluded.default_branch,
+        is_active=excluded.is_active
+    `, [
+      repository.id,
+      targetUserId,
+      "github",
+      repository.owner,
+      repository.name,
+      repository.defaultBranch,
+      1,
+      Date.now()
+    ]);
+  }
+
   for (const interaction of interactions) {
     await client.execute(`
       INSERT INTO interactions (
@@ -129,7 +160,7 @@ async function main() {
     ]);
   }
 
-  console.log("Seeded interactions and artifacts.");
+  console.log("Seeded users, repositories, interactions, and artifacts.");
   console.log("Demo login: demo@walkflow.dev / walkflow-demo-123");
 }
 

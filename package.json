@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "relay:dev": "node --import tsx scripts/twilio-relay-fastify.ts",
+    "relay:dev": "node --env-file=.env --import tsx scripts/twilio-relay-fastify.ts",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
