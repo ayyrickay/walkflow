@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { interactions } from "@/lib/db/schema";
+import { triggerGithubWriteSkillForInteraction } from "@/lib/skills/github-write";
 
 const statusSchema = z.enum(["captured", "proposed", "approved", "needs_review", "completed"]);
 
@@ -21,6 +22,10 @@ export async function POST(request: Request, { params }: { params: { id: string 
     .update(interactions)
     .set({ status: parsedStatus.data, updatedAt: new Date() })
     .where(and(eq(interactions.id, params.id), eq(interactions.userId, user.id)));
+
+  if (parsedStatus.data === "approved") {
+    triggerGithubWriteSkillForInteraction({ interactionId: params.id });
+  }
 
   return NextResponse.redirect(new URL(`/dashboard/interactions/${params.id}`, request.url));
 }

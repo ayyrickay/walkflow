@@ -52,8 +52,10 @@ After running `npm run seed`, use these credentials at `/login`:
 
 ## Notes
 
-- Call flow uses GitHub read access only to improve repository context. It does not write to GitHub.
+- On confirm, WalkFlow triggers GitHub write actions asynchronously for approved interactions: create issue first, then optional PR.
 - GitHub write APIs exist for web-initiated asynchronous actions and are hard-limited to `GITHUB_WRITE_ALLOWED_REPO`, in both REST and MCP modes.
+- Optional PR creation requires `WALKFLOW_ENABLE_AUTO_PR=true` and `WALKFLOW_PR_HEAD_REF=<existing-branch>`.
+- Issues are drafted from summary/transcript context by an issue-writing agent, but raw transcript is not posted to GitHub.
 - MCP mode expects a reachable MCP HTTP endpoint that supports `tools/call`.
 - Twilio ConversationRelay uses `TWILIO_CONVERSATION_RELAY_WSS_URL`.
 - Voice flow: caller speaks notes, says "done", WalkFlow proposes repo + issue, caller says "confirm" or "reject". A second rejection marks the interaction as `needs_review`.

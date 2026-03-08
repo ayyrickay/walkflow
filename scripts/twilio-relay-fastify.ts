@@ -20,6 +20,7 @@ import {
   buildRelayTextTokenMessages,
   parseConversationRelayMessage
 } from "../lib/twilio/conversation-relay";
+import { triggerGithubWriteSkillForInteraction } from "../lib/skills/github-write";
 
 type VoicePhase = "collecting" | "awaiting_confirmation" | "awaiting_retry_context" | "closed";
 
@@ -359,6 +360,12 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
         "Confirmed. I marked this interaction as approved for post-call action. Ending the call now.",
         { reason: "approved" }
       );
+      if (activeSession.interactionId) {
+        triggerGithubWriteSkillForInteraction({
+          interactionId: activeSession.interactionId,
+          preferPullRequest: activeSession.proposal?.actionType === "pr"
+        });
+      }
       return;
     }
 

@@ -40,6 +40,22 @@ type GithubPullRequestResult = {
   htmlUrl: string;
 };
 
+export type GithubRepoContextSnippet = {
+  path: string;
+  snippet: string;
+};
+
+export type GithubIssueRepoContext = {
+  repoFullName: string;
+  defaultBranch: string;
+  description: string | null;
+  topLevelPaths: string[];
+  readmeExcerpt: string | null;
+  matchedFiles: GithubRepoContextSnippet[];
+  isLikelyEmpty: boolean;
+  notes: string[];
+};
+
 function parseCsv(value: string | undefined): string[] {
   if (!value) {
     return [];
@@ -67,6 +83,66 @@ function parseOwnerAndName(repoFullName: string): { owner: string; repo: string 
 function parseOwnerFromFullName(repoFullName: string): string | null {
   const parsed = parseOwnerAndName(repoFullName);
   return parsed ? parsed.owner : null;
+}
+
+function tokenizeContextQuery(text: string): string[] {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9/_\-\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4);
+  return [...new Set(tokens)].slice(0, 8);
+}
+
+function decodeBase64ToUtf8(value: string): string {
+  try {
+    return Buffer.from(value.replace(/\n/g, ""), "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function summarizeText(value: string, maxLength = 900): string {
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength)}...`;
+}
+
+function isLikelyTextPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif")) {
+    return false;
+  }
+  if (lower.endsWith(".ico") || lower.endsWith(".pdf") || lower.endsWith(".zip") || lower.endsWith(".lock")) {
+    return false;
+  }
+  return true;
+}
+
+function encodeGithubPath(path: string): string {
+  return path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function extractSnippet(content: string, keywords: string[]): string {
+  const lines = content.split("\n");
+  const lowerKeywords = keywords.map((keyword) => keyword.toLowerCase());
+  const hitIndex = lines.findIndex((line) => {
+    const lower = line.toLowerCase();
+    return lowerKeywords.some((keyword) => lower.includes(keyword));
+  });
+
+  if (hitIndex >= 0) {
+    const start = Math.max(0, hitIndex - 2);
+    const end = Math.min(lines.length, hitIndex + 4);
+    return summarizeText(lines.slice(start, end).join("\n"), 500);
+  }
+
+  return summarizeText(lines.slice(0, 8).join("\n"), 500);
 }
 
 function sanitizeSearchQuery(text: string) {
@@ -337,6 +413,26 @@ async function githubPost(path: string, token: string, payload: Record<string, u
   return response.json();
 }
 
+async function githubGetMaybe(path: string, token: string): Promise<unknown | null> {
+  const response = await fetch(`https://api.github.com${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28"
+    }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return response.json();
+}
+
+function contextToken(): string {
+  return getGithubReadToken() || getGithubWriteToken();
+}
+
 export function isGithubReadConfigured() {
   if (getGithubProvider() === "mcp") {
     return Boolean(getMcpUrl());
@@ -441,6 +537,119 @@ export function ownersFromRepoNames(repos: string[]): string[] {
     }
   }
   return [...unique];
+}
+
+export async function fetchGithubIssueRepoContext(
+  repoFullName: string,
+  transcript: string,
+  summary: string
+): Promise<GithubIssueRepoContext> {
+  const parsed = parseOwnerAndName(repoFullName);
+  if (!parsed) {
+    return {
+      repoFullName,
+      defaultBranch: "main",
+      description: null,
+      topLevelPaths: [],
+      readmeExcerpt: null,
+      matchedFiles: [],
+      isLikelyEmpty: true,
+      notes: ["Repository name was not in owner/repo format."]
+    };
+  }
+
+  const provider = getGithubProvider();
+  if (provider === "mcp") {
+    return {
+      repoFullName,
+      defaultBranch: "main",
+      description: null,
+      topLevelPaths: [],
+      readmeExcerpt: null,
+      matchedFiles: [],
+      isLikelyEmpty: false,
+      notes: ["Repo context retrieval is currently REST-only; MCP mode returned minimal context."]
+    };
+  }
+
+  const token = contextToken();
+  if (!token) {
+    return {
+      repoFullName,
+      defaultBranch: "main",
+      description: null,
+      topLevelPaths: [],
+      readmeExcerpt: null,
+      matchedFiles: [],
+      isLikelyEmpty: false,
+      notes: ["No GitHub token available for repo context retrieval."]
+    };
+  }
+
+  const repoPayload = await githubGetMaybe(`/repos/${parsed.owner}/${parsed.repo}`, token);
+  const repoRecord = toRecord(repoPayload);
+  const defaultBranch = asString(repoRecord?.default_branch) || "main";
+  const description = asString(repoRecord?.description) || null;
+
+  const readmePayload = await githubGetMaybe(`/repos/${parsed.owner}/${parsed.repo}/readme`, token);
+  const readmeRecord = toRecord(readmePayload);
+  const readmeContent = asString(readmeRecord?.content);
+  const readmeExcerpt = readmeContent ? summarizeText(decodeBase64ToUtf8(readmeContent), 1000) : null;
+
+  const treePayload = await githubGetMaybe(
+    `/repos/${parsed.owner}/${parsed.repo}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`,
+    token
+  );
+  const treeRecord = toRecord(treePayload);
+  const treeItems = Array.isArray(treeRecord?.tree) ? treeRecord.tree : [];
+  const filePaths = treeItems
+    .map((item) => toRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .filter((item) => asString(item.type) === "blob")
+    .map((item) => asString(item.path))
+    .filter(Boolean);
+
+  const topLevelPaths = [...new Set(filePaths.map((path) => path.split("/")[0]).filter(Boolean))].slice(0, 20);
+
+  const keywords = tokenizeContextQuery(`${summary}\n${transcript}`);
+  const matchedPaths = filePaths
+    .filter((path) => isLikelyTextPath(path))
+    .filter((path) => keywords.some((keyword) => path.toLowerCase().includes(keyword)))
+    .slice(0, 3);
+
+  const matchedFiles: GithubRepoContextSnippet[] = [];
+  for (const path of matchedPaths) {
+    const contentPayload = await githubGetMaybe(
+      `/repos/${parsed.owner}/${parsed.repo}/contents/${encodeGithubPath(path)}?ref=${encodeURIComponent(defaultBranch)}`,
+      token
+    );
+    const contentRecord = toRecord(contentPayload);
+    const encodedContent = asString(contentRecord?.content);
+    if (!encodedContent) {
+      continue;
+    }
+    const decoded = decodeBase64ToUtf8(encodedContent);
+    if (!decoded.trim()) {
+      continue;
+    }
+    matchedFiles.push({
+      path,
+      snippet: extractSnippet(decoded, keywords)
+    });
+  }
+
+  const isLikelyEmpty = filePaths.length === 0 || (filePaths.length <= 2 && !readmeExcerpt);
+
+  return {
+    repoFullName,
+    defaultBranch,
+    description,
+    topLevelPaths,
+    readmeExcerpt,
+    matchedFiles,
+    isLikelyEmpty,
+    notes: isLikelyEmpty ? ["Repository appears empty or nearly empty."] : []
+  };
 }
 
 export async function createGithubIssue(input: CreateIssueInput): Promise<GithubIssueResult> {
