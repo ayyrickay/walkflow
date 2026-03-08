@@ -65,4 +65,5 @@ Never auto-complete uncertain interactions.
 | Session | Label | Resume Command |
 | --- | --- | --- |
 | 1 | App Scaffolding Session | `codex resume 019ccb16-2986-76d3-97f6-51ddd79d1b3b` |
-
+| 2 | Twilio Working Milestone | `codex resume 019ccb5b-10f7-7db0-8071-7ff072aa6c47` |
+| 3 | OpenAI Call Intelligence Session | `codex resume 019cccf5-1752-7932-bbb7-0aee380036fe` |
