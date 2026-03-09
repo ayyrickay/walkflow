@@ -7,8 +7,10 @@ import {
   createGithubIssue,
   createGithubPullRequest,
   fetchGithubIssueRepoContext,
+  type GithubIssueRepoContext,
   isGithubWriteConfigured
 } from "@/lib/github";
+import { runCodexPrAutomation } from "@/lib/codex";
 import { draftGithubIssue, passesIssueQualityGate } from "@/lib/openai/issue-writer";
 
 type GithubWriteSkillInput = {
@@ -37,9 +39,31 @@ function stripActionPrefix(value: string): string {
   return value.replace(/^\[(issue|pr)\]\s*/i, "").trim();
 }
 
+function buildPullRequestBody(issueNumber: number): string {
+  return `Closes #${issueNumber}\n\nCreated by WalkFlow after caller confirmation.`;
+}
+
+export function extractIssueNumberFromUrl(issueUrl: string): number | null {
+  const normalized = issueUrl.trim().replace(/\/+$/, "");
+  const match = normalized.match(/\/issues\/(\d+)$/i);
+  if (!match) {
+    return null;
+  }
+  const issueNumber = Number(match[1]);
+  return Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null;
+}
+
 function parseEnabled(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function parseEnabledDefaultTrue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return normalized !== "0" && normalized !== "false" && normalized !== "no";
 }
 
 export function isEligibleInteractionStatus(status: string): boolean {
@@ -109,12 +133,15 @@ export async function runGithubWriteSkillForInteraction(
   }
 
   try {
+    const requestedAction = parseActionFromChosenIssueTitle(interaction.chosenIssueTitle);
+    const shouldAttemptPr = requestedAction === "pr" || Boolean(input.preferPullRequest);
+
     const [existingArtifact] = await db
       .select()
       .from(artifacts)
       .where(eq(artifacts.interactionId, interaction.id));
 
-    if (existingArtifact?.githubIssueLink) {
+    if (existingArtifact?.githubIssueLink && (!shouldAttemptPr || Boolean(existingArtifact.githubPrLink))) {
       await db
         .update(interactions)
         .set({
@@ -131,44 +158,63 @@ export async function runGithubWriteSkillForInteraction(
       };
     }
 
-    const repoContext = await fetchGithubIssueRepoContext(
-      interaction.chosenRepoName,
-      interaction.transcript,
-      interaction.summary
-    );
+    let repoContext: GithubIssueRepoContext | null = null;
+    let issueUrl: string;
+    let issueNumber: number;
+    let issueBodyForCodex = interaction.summary;
 
-    const draft = await draftGithubIssue({
-      repoName: interaction.chosenRepoName,
-      suggestedTitle: interaction.chosenIssueTitle,
-      summary: interaction.summary,
-      transcript: interaction.transcript,
-      repoContext
-    });
+    if (existingArtifact?.githubIssueLink) {
+      const extractedIssueNumber = extractIssueNumberFromUrl(existingArtifact.githubIssueLink);
+      if (!extractedIssueNumber) {
+        throw new Error("Existing issue link could not be parsed for issue number.");
+      }
+      issueUrl = existingArtifact.githubIssueLink;
+      issueNumber = extractedIssueNumber;
+    } else {
+      const fetchedRepoContext = await fetchGithubIssueRepoContext(
+        interaction.chosenRepoName,
+        interaction.transcript,
+        interaction.summary
+      );
+      const repoContextForPr = fetchedRepoContext;
 
-    if (!passesIssueQualityGate(draft, repoContext)) {
-      const reason = repoContext.isLikelyEmpty
-        ? "Issue draft skipped due to quality gate; repo appears empty and needs manual direction."
-        : "Issue draft skipped due to quality gate; insufficient concrete repo grounding.";
-      await upsertArtifact(interaction.id, {
-        codeChangesSummary: reason
+      const draft = await draftGithubIssue({
+        repoName: interaction.chosenRepoName,
+        suggestedTitle: interaction.chosenIssueTitle,
+        summary: interaction.summary,
+        transcript: interaction.transcript,
+        repoContext: fetchedRepoContext
       });
-      return {
-        ok: false,
-        issueUrl: null,
-        pullRequestUrl: null,
-        completed: false,
-        skippedReason: reason
-      };
+
+      if (!passesIssueQualityGate(draft, fetchedRepoContext)) {
+        const reason = fetchedRepoContext.isLikelyEmpty
+          ? "Issue draft quality-gate warning: repo appears empty and needs manual direction."
+          : "Issue draft quality-gate warning: insufficient concrete repo grounding.";
+        if (!shouldAttemptPr) {
+          await upsertArtifact(interaction.id, {
+            codeChangesSummary: `${reason} Skipping auto-action and leaving for review.`
+          });
+          return {
+            ok: false,
+            issueUrl: null,
+            pullRequestUrl: null,
+            completed: false,
+            skippedReason: reason
+          };
+        }
+        issueBodyForCodex = `${draft.body}\n\n## Confidence Note\n- ${reason}`;
+      }
+
+      const issue = await createGithubIssue({
+        repoFullName: interaction.chosenRepoName,
+        title: draft.title,
+        body: draft.body
+      });
+      repoContext = repoContextForPr;
+      issueUrl = issue.htmlUrl;
+      issueNumber = issue.number;
+      issueBodyForCodex = draft.body;
     }
-
-    const issue = await createGithubIssue({
-      repoFullName: interaction.chosenRepoName,
-      title: draft.title,
-      body: draft.body
-    });
-
-    const requestedAction = parseActionFromChosenIssueTitle(interaction.chosenIssueTitle);
-    const shouldAttemptPr = requestedAction === "pr" || Boolean(input.preferPullRequest);
 
     let prUrl: string | null = null;
     let prStatus = "Issue created.";
@@ -179,22 +225,69 @@ export async function runGithubWriteSkillForInteraction(
 
       if (!prEnabled) {
         prStatus = "Issue created. PR skipped because WALKFLOW_ENABLE_AUTO_PR is disabled.";
-      } else if (!headRef) {
-        prStatus = "Issue created. PR skipped because WALKFLOW_PR_HEAD_REF is not set.";
       } else {
-        const pullRequest = await createGithubPullRequest({
-          repoFullName: interaction.chosenRepoName,
-          title: `Draft: ${stripActionPrefix(draft.title)}`,
-          body: `Closes #${issue.number}\n\nCreated by WalkFlow after caller confirmation.`,
-          head: headRef
-        });
-        prUrl = pullRequest.htmlUrl;
-        prStatus = "Issue and pull request created.";
+        const existingPrUrl = existingArtifact?.githubPrLink ?? null;
+        if (existingPrUrl) {
+          prUrl = existingPrUrl;
+          prStatus = "Issue and pull request already exist.";
+        } else {
+          const codexPrEnabled = parseEnabledDefaultTrue(process.env.WALKFLOW_ENABLE_CODEX_PR);
+          let resolvedHeadRef = headRef;
+          let prTitle = `Draft: ${stripActionPrefix(interaction.chosenIssueTitle)}`;
+          let prBody = buildPullRequestBody(issueNumber);
+
+          if (codexPrEnabled) {
+            if (!repoContext) {
+              repoContext = await fetchGithubIssueRepoContext(
+                interaction.chosenRepoName,
+                interaction.transcript,
+                interaction.summary
+              );
+            }
+            try {
+              const codexResult = await runCodexPrAutomation({
+                repoFullName: interaction.chosenRepoName,
+                interactionId: interaction.id,
+                issueNumber,
+                issueTitle: stripActionPrefix(interaction.chosenIssueTitle),
+                issueBody: issueBodyForCodex,
+                interactionSummary: interaction.summary,
+                transcript: interaction.transcript,
+                repoContext
+              });
+              resolvedHeadRef = codexResult.headRef;
+              prTitle = codexResult.prTitle;
+              prBody = `${buildPullRequestBody(issueNumber)}\n\n${codexResult.prBodySuffix}`;
+              prStatus = `Issue and pull request created. ${codexResult.codeChangesSummary}`;
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Unknown codex error";
+              if (!resolvedHeadRef) {
+                throw new Error(`PR skipped: Codex automation failed and WALKFLOW_PR_HEAD_REF is unset (${message}).`);
+              }
+              prStatus = `Issue created. Codex branch generation failed (${message}); falling back to WALKFLOW_PR_HEAD_REF.`;
+            }
+          }
+
+          if (!resolvedHeadRef) {
+            prStatus = "Issue created. PR skipped because WALKFLOW_PR_HEAD_REF is not set.";
+          } else {
+            const pullRequest = await createGithubPullRequest({
+              repoFullName: interaction.chosenRepoName,
+              title: prTitle,
+              body: prBody,
+              head: resolvedHeadRef
+            });
+            prUrl = pullRequest.htmlUrl;
+            if (!prStatus.startsWith("Issue and pull request created.")) {
+              prStatus = "Issue and pull request created.";
+            }
+          }
+        }
       }
     }
 
     await upsertArtifact(interaction.id, {
-      githubIssueLink: issue.htmlUrl,
+      githubIssueLink: issueUrl,
       githubPrLink: prUrl,
       codeChangesSummary: prStatus
     });
@@ -209,7 +302,7 @@ export async function runGithubWriteSkillForInteraction(
 
     return {
       ok: true,
-      issueUrl: issue.htmlUrl,
+      issueUrl,
       pullRequestUrl: prUrl,
       completed: true
     };

@@ -54,7 +54,9 @@ After running `npm run seed`, use these credentials at `/login`:
 
 - On confirm, WalkFlow triggers GitHub write actions asynchronously for approved interactions: create issue first, then optional PR.
 - GitHub write APIs exist for web-initiated asynchronous actions and are hard-limited to `GITHUB_WRITE_ALLOWED_REPO`, in both REST and MCP modes.
-- Optional PR creation requires `WALKFLOW_ENABLE_AUTO_PR=true` and `WALKFLOW_PR_HEAD_REF=<existing-branch>`.
+- Optional PR creation requires `WALKFLOW_ENABLE_AUTO_PR=true`.
+- By default, PRs use Codex-generated code on a new branch (`WALKFLOW_ENABLE_CODEX_PR=true`).
+- If Codex PR generation is disabled or fails, WalkFlow can fall back to `WALKFLOW_PR_HEAD_REF=<existing-branch>`.
 - Issues are drafted from summary/transcript context by an issue-writing agent, but raw transcript is not posted to GitHub.
 - MCP mode expects a reachable MCP HTTP endpoint that supports `tools/call`.
 - Twilio ConversationRelay uses `TWILIO_CONVERSATION_RELAY_WSS_URL`.

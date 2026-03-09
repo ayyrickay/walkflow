@@ -40,6 +40,16 @@ type GithubPullRequestResult = {
   htmlUrl: string;
 };
 
+export type GithubFileContentResult = {
+  sha: string | null;
+  content: string | null;
+};
+
+export type GithubInitialCommitFile = {
+  path: string;
+  content: string;
+};
+
 export type GithubRepoContextSnippet = {
   path: string;
   snippet: string;
@@ -413,6 +423,26 @@ async function githubPost(path: string, token: string, payload: Record<string, u
   return response.json();
 }
 
+async function githubPut(path: string, token: string, payload: Record<string, unknown>): Promise<unknown> {
+  const response = await fetch(`https://api.github.com${path}`, {
+    method: "PUT",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub API PUT ${path} failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+
+  return response.json();
+}
+
 async function githubGetMaybe(path: string, token: string): Promise<unknown | null> {
   const response = await fetch(`https://api.github.com${path}`, {
     headers: {
@@ -729,4 +759,210 @@ export async function createGithubPullRequest(input: CreatePullRequestInput): Pr
     base: input.base?.trim() || defaultBaseBranch
   });
   return normalizePullRequestResult(body);
+}
+
+export async function getGithubDefaultBranch(repoFullName: string): Promise<string> {
+  const token = getGithubWriteToken();
+  if (!token) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  const parsed = parseOwnerAndName(repoFullName);
+  if (!parsed) {
+    throw new Error("repoFullName must be in owner/repo format.");
+  }
+
+  const body = await githubGet(`/repos/${parsed.owner}/${parsed.repo}`, token);
+  const record = toRecord(body);
+  return asString(record?.default_branch) || "main";
+}
+
+export async function getGithubBranchHeadSha(repoFullName: string, branchName: string): Promise<string> {
+  const token = getGithubWriteToken();
+  if (!token) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  const parsed = parseOwnerAndName(repoFullName);
+  if (!parsed) {
+    throw new Error("repoFullName must be in owner/repo format.");
+  }
+
+  const body = await githubGet(
+    `/repos/${parsed.owner}/${parsed.repo}/git/ref/heads/${encodeURIComponent(branchName)}`,
+    token
+  );
+  const record = toRecord(body);
+  const objectRecord = toRecord(record?.object);
+  const sha = asString(objectRecord?.sha);
+  if (!sha) {
+    throw new Error(`Unable to resolve branch SHA for ${branchName}.`);
+  }
+  return sha;
+}
+
+export async function createGithubBranchFromSha(
+  repoFullName: string,
+  branchName: string,
+  fromSha: string
+): Promise<void> {
+  const token = getGithubWriteToken();
+  if (!token) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  const parsed = parseOwnerAndName(repoFullName);
+  if (!parsed) {
+    throw new Error("repoFullName must be in owner/repo format.");
+  }
+
+  const response = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/git/refs`, {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    body: JSON.stringify({
+      ref: `refs/heads/${branchName}`,
+      sha: fromSha
+    })
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  if (response.status === 422) {
+    const text = await response.text();
+    if (text.toLowerCase().includes("reference already exists")) {
+      return;
+    }
+    throw new Error(`GitHub API branch create rejected (${response.status}): ${text.slice(0, 200)}`);
+  }
+
+  const text = await response.text();
+  throw new Error(`GitHub API branch create failed (${response.status}): ${text.slice(0, 200)}`);
+}
+
+export async function getGithubFileContent(
+  repoFullName: string,
+  path: string,
+  ref: string
+): Promise<GithubFileContentResult> {
+  const token = getGithubWriteToken();
+  if (!token) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  const parsed = parseOwnerAndName(repoFullName);
+  if (!parsed) {
+    throw new Error("repoFullName must be in owner/repo format.");
+  }
+
+  const payload = await githubGetMaybe(
+    `/repos/${parsed.owner}/${parsed.repo}/contents/${encodeGithubPath(path)}?ref=${encodeURIComponent(ref)}`,
+    token
+  );
+  const record = toRecord(payload);
+  if (!record) {
+    return { sha: null, content: null };
+  }
+
+  const sha = asString(record.sha) || null;
+  const encodedContent = asString(record.content);
+  const content = encodedContent ? decodeBase64ToUtf8(encodedContent) : null;
+  return { sha, content };
+}
+
+type UpsertGithubFileInput = {
+  repoFullName: string;
+  path: string;
+  content: string;
+  message: string;
+  branch: string;
+  sha?: string | null;
+};
+
+export async function upsertGithubFile(input: UpsertGithubFileInput): Promise<void> {
+  const allowedRepo = getAllowedWriteRepo();
+  if (!allowedRepo) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  if (input.repoFullName.trim() !== allowedRepo) {
+    throw new Error(`Writes are restricted to ${allowedRepo}.`);
+  }
+
+  if (getGithubProvider() === "mcp") {
+    throw new Error("Codex file writes are currently REST-only; set GITHUB_PROVIDER=rest.");
+  }
+
+  const token = getGithubWriteToken();
+  if (!token) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  const parsed = parseOwnerAndName(input.repoFullName);
+  if (!parsed) {
+    throw new Error("repoFullName must be in owner/repo format.");
+  }
+
+  const payload: Record<string, unknown> = {
+    message: input.message.trim(),
+    content: Buffer.from(input.content, "utf8").toString("base64"),
+    branch: input.branch.trim()
+  };
+  if (input.sha) {
+    payload.sha = input.sha;
+  }
+
+  await githubPut(`/repos/${parsed.owner}/${parsed.repo}/contents/${encodeGithubPath(input.path)}`, token, payload);
+}
+
+type CreateGithubInitialCommitBranchInput = {
+  repoFullName: string;
+  branchName: string;
+  message: string;
+  files: GithubInitialCommitFile[];
+};
+
+export async function createGithubInitialCommitBranch(input: CreateGithubInitialCommitBranchInput): Promise<void> {
+  const allowedRepo = getAllowedWriteRepo();
+  if (!allowedRepo) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  if (input.repoFullName.trim() !== allowedRepo) {
+    throw new Error(`Writes are restricted to ${allowedRepo}.`);
+  }
+
+  if (getGithubProvider() === "mcp") {
+    throw new Error("Codex initial commit bootstrap is currently REST-only; set GITHUB_PROVIDER=rest.");
+  }
+
+  const token = getGithubWriteToken();
+  if (!token) {
+    throw new Error("GitHub write integration is not configured.");
+  }
+
+  const parsed = parseOwnerAndName(input.repoFullName);
+  if (!parsed) {
+    throw new Error("repoFullName must be in owner/repo format.");
+  }
+
+  if (input.files.length === 0) {
+    throw new Error("Initial commit bootstrap requires at least one file.");
+  }
+
+  let index = 0;
+  for (const file of input.files) {
+    index += 1;
+    await githubPut(`/repos/${parsed.owner}/${parsed.repo}/contents/${encodeGithubPath(file.path)}`, token, {
+      message: `${input.message.trim()} (${index}/${input.files.length})`,
+      content: Buffer.from(file.content, "utf8").toString("base64"),
+      branch: input.branchName
+    });
+  }
 }

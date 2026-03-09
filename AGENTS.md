@@ -68,3 +68,4 @@ Never auto-complete uncertain interactions.
 | 2 | Twilio Working Milestone | `codex resume 019ccb5b-10f7-7db0-8071-7ff072aa6c47` |
 | 3 | OpenAI Call Intelligence Session | `codex resume 019cccf5-1752-7932-bbb7-0aee380036fe` |
 | 4 | GitHub Access Mapping Session | `codex resume 019ccf1b-a31f-7cd2-a9b0-cba43d0d8434` |
+| 5 | Issue Creation Logic Working Session | `codex resume 019ccf95-bc1e-7643-bed1-71ae5e25bd93` |

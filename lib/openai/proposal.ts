@@ -63,6 +63,26 @@ function normalizeProposal(value: unknown): VoiceProposal | null {
   return { repoName, actionType, issueTitle, summary };
 }
 
+function inferActionTypeFromTranscript(transcript: string): "issue" | "pr" {
+  const text = transcript.toLowerCase();
+
+  const explicitPrIntent = /\b(pr|pull request)\b/.test(text);
+  const explicitIssueIntent = /\b(issue|ticket|backlog)\b/.test(text);
+  const issueOnlyIntent = /\b(research|investigate|explore|spike|design doc|spec|plan)\b/.test(text);
+  const implementationIntent = /\b(implement|build|add|fix|refactor|code|ship|update|change)\b/.test(text);
+  const deferCodingIntent = /\b(don'?t code|not code|no code|later)\b/.test(text);
+
+  if (explicitPrIntent) {
+    return "pr";
+  }
+
+  if (deferCodingIntent || (explicitIssueIntent && !implementationIntent) || (issueOnlyIntent && !implementationIntent)) {
+    return "issue";
+  }
+
+  return "pr";
+}
+
 function normalizeRepoToken(value: string) {
   return value.trim().toLowerCase();
 }
@@ -177,9 +197,17 @@ function fallbackProposal(transcript: string, availableRepos: string[]): VoicePr
 
   return {
     repoName: circulatingMagazines || ranked[0] || "walkflow/voice",
-    actionType: "issue",
+    actionType: inferActionTypeFromTranscript(transcript),
     issueTitle: "Follow up on captured walk note",
     summary
+  };
+}
+
+function enforceActionBias(transcript: string, proposal: VoiceProposal): VoiceProposal {
+  const inferred = inferActionTypeFromTranscript(transcript);
+  return {
+    ...proposal,
+    actionType: inferred
   };
 }
 
@@ -262,7 +290,8 @@ export async function generateVoiceProposal(transcript: string, availableRepos: 
       return fallbackProposal(transcript, rankedRepos);
     }
 
-    return enforceKnownRepository(transcript, rankedRepos, normalized);
+    const withKnownRepo = enforceKnownRepository(transcript, rankedRepos, normalized);
+    return enforceActionBias(transcript, withKnownRepo);
   } catch {
     logFallback("OpenAI request failed unexpectedly");
     return fallbackProposal(transcript, rankedRepos);
