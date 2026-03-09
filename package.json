@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "migrate:transcripts": "node --import tsx scripts/migrate-interaction-transcripts-to-json.ts",
     "seed": "node scripts/seed.mjs"
   },
   "dependencies": {

@@ -12,6 +12,7 @@ import {
 } from "@/lib/github";
 import { runCodexPrAutomation } from "@/lib/codex";
 import { draftGithubIssue, passesIssueQualityGate } from "@/lib/openai/issue-writer";
+import { transcriptToPlainText } from "@/lib/transcript";
 
 type GithubWriteSkillInput = {
   interactionId: string;
@@ -133,6 +134,7 @@ export async function runGithubWriteSkillForInteraction(
   }
 
   try {
+    const transcriptText = transcriptToPlainText(interaction.transcript);
     const requestedAction = parseActionFromChosenIssueTitle(interaction.chosenIssueTitle);
     const shouldAttemptPr = requestedAction === "pr" || Boolean(input.preferPullRequest);
 
@@ -173,7 +175,7 @@ export async function runGithubWriteSkillForInteraction(
     } else {
       const fetchedRepoContext = await fetchGithubIssueRepoContext(
         interaction.chosenRepoName,
-        interaction.transcript,
+        transcriptText,
         interaction.summary
       );
       const repoContextForPr = fetchedRepoContext;
@@ -182,7 +184,7 @@ export async function runGithubWriteSkillForInteraction(
         repoName: interaction.chosenRepoName,
         suggestedTitle: interaction.chosenIssueTitle,
         summary: interaction.summary,
-        transcript: interaction.transcript,
+        transcript: transcriptText,
         repoContext: fetchedRepoContext
       });
 
@@ -240,7 +242,7 @@ export async function runGithubWriteSkillForInteraction(
             if (!repoContext) {
               repoContext = await fetchGithubIssueRepoContext(
                 interaction.chosenRepoName,
-                interaction.transcript,
+                transcriptText,
                 interaction.summary
               );
             }
@@ -252,7 +254,7 @@ export async function runGithubWriteSkillForInteraction(
                 issueTitle: stripActionPrefix(interaction.chosenIssueTitle),
                 issueBody: issueBodyForCodex,
                 interactionSummary: interaction.summary,
-                transcript: interaction.transcript,
+                transcript: transcriptText,
                 repoContext
               });
               resolvedHeadRef = codexResult.headRef;

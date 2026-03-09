@@ -21,6 +21,7 @@ import {
   parseConversationRelayMessage
 } from "../lib/twilio/conversation-relay";
 import { triggerGithubWriteSkillForInteraction } from "../lib/skills/github-write";
+import { serializeTranscriptTurns, transcriptToPlainText, type TranscriptTurn } from "../lib/transcript";
 
 type VoicePhase = "collecting" | "awaiting_confirmation" | "awaiting_retry_context" | "closed";
 
@@ -29,7 +30,7 @@ type SessionState = {
   from: string | null;
   interactionId: string | null;
   userId: string | null;
-  transcript: string[];
+  transcript: TranscriptTurn[];
   callerNotes: string[];
   phase: VoicePhase;
   rejectionCount: number;
@@ -64,9 +65,16 @@ function getOrCreateSession(ws: WebSocket): SessionState {
   return created;
 }
 
-function appendTurn(existing: string[], role: "caller" | "agent", text: string) {
-  const prefix = role === "caller" ? "Caller" : "Agent";
-  return [...existing, `${prefix}: ${text.trim()}`];
+function appendTurn(existing: TranscriptTurn[], role: "caller" | "agent", text: string) {
+  const label = role === "caller" ? "Caller" : "Agent";
+  return [
+    ...existing,
+    {
+      role,
+      label,
+      text: text.trim()
+    }
+  ];
 }
 
 function logTranscriptTurn(session: SessionState, role: "caller" | "agent", text: string) {
@@ -76,11 +84,11 @@ function logTranscriptTurn(session: SessionState, role: "caller" | "agent", text
   console.log(`[transcript][${callSid}][${label}] ${cleaned}`);
 }
 
-async function persistTranscript(interactionId: string, transcript: string[]) {
+async function persistTranscript(interactionId: string, transcript: TranscriptTurn[]) {
   await db
     .update(interactions)
     .set({
-      transcript: transcript.join("\n"),
+      transcript: serializeTranscriptTurns(transcript),
       updatedAt: new Date()
     })
     .where(eq(interactions.id, interactionId));
@@ -168,7 +176,7 @@ async function createInteraction(from: string | null): Promise<{ interactionId: 
     id: interactionId,
     userId,
     status: "captured",
-    transcript: "",
+    transcript: "[]",
     summary: "Live call captured via Twilio ConversationRelay.",
     chosenRepoName: "TBD",
     chosenIssueTitle: "Live interaction pending review",
@@ -284,20 +292,21 @@ async function flushSession(session: SessionState) {
     return;
   }
 
-  const finalTranscript = session.transcript.join("\n");
-  const summary = finalTranscript.length > 0
+  const serializedTranscript = serializeTranscriptTurns(session.transcript);
+  const plainTextTranscript = transcriptToPlainText(serializedTranscript);
+  const summary = plainTextTranscript.length > 0
     ? "Live call transcript captured and ready for review."
     : "Live call ended without transcript content.";
 
   await persistInteractionState(session.interactionId, {
-    transcript: finalTranscript,
+    transcript: serializedTranscript,
     summary
   });
 
-  if (finalTranscript.trim()) {
+  if (plainTextTranscript.trim()) {
     const callSid = session.callSid || "unknown-call";
     console.log(`[transcript][${callSid}][FINAL_START]`);
-    console.log(finalTranscript);
+    console.log(plainTextTranscript);
     console.log(`[transcript][${callSid}][FINAL_END]`);
   }
 }

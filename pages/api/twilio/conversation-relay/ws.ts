@@ -8,13 +8,14 @@ import { createId } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { appSettings, interactions, users } from "@/lib/db/schema";
 import { normalizePhoneE164 } from "@/lib/phone";
+import { serializeTranscriptTurns, type TranscriptTurn } from "@/lib/transcript";
 import { buildRelayTextTokenMessages, parseConversationRelayMessage } from "@/lib/twilio/conversation-relay";
 
 type SessionState = {
   callSid: string | null;
   from: string | null;
   interactionId: string | null;
-  transcript: string[];
+  transcript: TranscriptTurn[];
   lastUpdatedAt: number;
 };
 
@@ -33,16 +34,23 @@ type ApiResponseWithSocket = NextApiResponse & {
 const liveSessions = new Map<string, SessionState>();
 const wsSessionLookup = new WeakMap<WebSocket, SessionState>();
 
-function appendTranscriptTurn(existing: string[], role: "caller" | "agent", text: string) {
-  const prefix = role === "caller" ? "Caller" : "Agent";
-  return [...existing, `${prefix}: ${text.trim()}`];
+function appendTranscriptTurn(existing: TranscriptTurn[], role: "caller" | "agent", text: string) {
+  const label = role === "caller" ? "Caller" : "Agent";
+  return [
+    ...existing,
+    {
+      role,
+      label,
+      text: text.trim()
+    }
+  ];
 }
 
-async function persistInteractionTranscript(interactionId: string, transcript: string[]) {
+async function persistInteractionTranscript(interactionId: string, transcript: TranscriptTurn[]) {
   await db
     .update(interactions)
     .set({
-      transcript: transcript.join("\n"),
+      transcript: serializeTranscriptTurns(transcript),
       updatedAt: new Date()
     })
     .where(eq(interactions.id, interactionId));
@@ -86,7 +94,7 @@ async function createInteractionForSession(session: SessionState) {
     id: interactionId,
     userId,
     status: "captured",
-    transcript: "",
+    transcript: "[]",
     summary: "Live call captured via Twilio ConversationRelay.",
     chosenRepoName: "TBD",
     chosenIssueTitle: "Live interaction pending review",
@@ -166,8 +174,8 @@ async function flushSessionToDb(session: SessionState) {
     return;
   }
 
-  const finalTranscript = session.transcript.join("\n");
-  const summary = finalTranscript.length > 0
+  const finalTranscript = serializeTranscriptTurns(session.transcript);
+  const summary = session.transcript.length > 0
     ? "Live call transcript captured and ready for review."
     : "Live call ended without transcript content.";
 

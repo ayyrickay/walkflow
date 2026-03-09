@@ -40,6 +40,10 @@ const interactions = [
   }
 ];
 
+function asTranscriptJson(text) {
+  return JSON.stringify([{ role: "caller", speaker: "Caller", text }]);
+}
+
 const artifacts = [
   {
     id: "art-001",
@@ -129,7 +133,7 @@ async function main() {
       interaction.id,
       targetUserId,
       interaction.status,
-      interaction.transcript,
+      asTranscriptJson(interaction.transcript),
       interaction.summary,
       interaction.chosenRepoName,
       interaction.chosenIssueTitle,
