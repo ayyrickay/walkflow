@@ -72,6 +72,7 @@ Never auto-complete uncertain interactions.
 | 6 | PR Generation with Codex Session | `codex resume 019ccfcd-ec19-7730-b935-fe3bc79cdf13` |
 | 7 | UI Edits Session | `codex resume 019ccffa-ca8f-7822-9b92-012763290932` |
 | 8 | Dashboard Confirm Automation Session | `codex resume 019cd049-ab97-70f3-b1c4-f00ae9802734` |
+| 9 | Assorted UX Polishes and Repo Cleanup Session | `codex resume 019cd05f-ee13-79d0-ab9d-bce3f99fc631` |
 
 ## Up Next
 - Error UX consistency: apply the same in-modal error treatment used on auth forms to other form-driven dashboard actions that can currently surface raw API errors.
