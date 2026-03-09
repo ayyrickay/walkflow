@@ -5,3 +5,5 @@ node_modules
 *.sqlite
 *.sqlite-journal
 tsconfig.tsbuildinfo
+coverage
+*.log

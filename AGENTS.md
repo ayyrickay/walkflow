@@ -72,3 +72,7 @@ Never auto-complete uncertain interactions.
 | 6 | PR Generation with Codex Session | `codex resume 019ccfcd-ec19-7730-b935-fe3bc79cdf13` |
 | 7 | UI Edits Session | `codex resume 019ccffa-ca8f-7822-9b92-012763290932` |
 | 8 | Dashboard Confirm Automation Session | `codex resume 019cd049-ab97-70f3-b1c4-f00ae9802734` |
+
+## Follow-up Backlog
+- Error UX consistency: apply the same in-modal error treatment used on auth forms to other form-driven dashboard actions that can currently surface raw API errors.
+- Security hardening: add CSRF protection on auth POST routes and basic rate limiting/lockout on login attempts.
