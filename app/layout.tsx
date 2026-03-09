@@ -5,6 +5,7 @@ import { Barlow_Condensed, IBM_Plex_Mono, Space_Grotesk } from "next/font/google
 import Link from "next/link";
 
 import { getCurrentUser } from "@/lib/auth";
+import { NavActions } from "@/components/ui/nav-actions";
 
 const brandFont = Barlow_Condensed({
   subsets: ["latin"],
@@ -26,7 +27,11 @@ const monoFont = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "WalkFlow",
-  description: "Capture developer thoughts while walking"
+  description: "Capture developer thoughts while walking",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg"
+  }
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -40,16 +45,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link href="/" className="brand-link">
               WALKFLOW
             </Link>
-            <div className="nav-actions">
-              {user ? (
-                <>
-                  <span className="nav-meta">{user.email}</span>
-                  <Link href="/logout">Logout</Link>
-                </>
-              ) : (
-                <Link href="/login">Login</Link>
-              )}
-            </div>
+            <NavActions userEmail={user?.email ?? null} />
           </nav>
         </header>
         <main>{children}</main>

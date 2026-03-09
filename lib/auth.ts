@@ -64,7 +64,15 @@ export async function setSessionCookie(token: string) {
 }
 
 export function clearSessionCookie() {
-  cookies().delete(SESSION_COOKIE_NAME);
+  cookies().set({
+    name: SESSION_COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    expires: new Date(0),
+    path: "/"
+  });
 }
 
 export async function getCurrentUser() {

@@ -4,5 +4,5 @@ import { clearSessionCookie } from "@/lib/auth";
 
 export async function POST(request: Request) {
   clearSessionCookie();
-  return NextResponse.redirect(new URL("/login", request.url));
+  return NextResponse.redirect(new URL("/", request.url));
 }
