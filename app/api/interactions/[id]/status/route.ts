@@ -5,7 +5,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { interactions } from "@/lib/db/schema";
-import { triggerGithubWriteSkillForInteraction } from "@/lib/skills/github-write";
+import { runGithubWriteSkillForInteraction } from "@/lib/skills/github-write";
 
 const statusSchema = z.enum(["approved", "needs_review", "archived"]);
 
@@ -32,9 +32,9 @@ export async function POST(request: Request, { params }: { params: { id: string 
     .set({ status: parsedStatus.data, updatedAt: new Date() })
     .where(and(eq(interactions.id, params.id), eq(interactions.userId, user.id)));
 
-  if (parsedStatus.data === "approved" && current.status !== "approved" && current.status !== "completed") {
-    triggerGithubWriteSkillForInteraction({ interactionId: params.id });
+  if (parsedStatus.data === "approved" && current.status !== "completed") {
+    await runGithubWriteSkillForInteraction({ interactionId: params.id });
   }
 
-  return NextResponse.redirect(new URL(`/dashboard/interactions/${params.id}`, request.url));
+  return NextResponse.redirect(new URL(`/dashboard/interactions/${params.id}`, request.url), { status: 303 });
 }

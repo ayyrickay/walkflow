@@ -40,6 +40,38 @@ function stripActionPrefix(value: string): string {
   return value.replace(/^\[(issue|pr)\]\s*/i, "").trim();
 }
 
+function summarizeTitleFromSummary(summary: string): string {
+  const normalized = summary.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const firstSentence = normalized.split(/(?<=[.!?])\s+/)[0] || normalized;
+  const cleaned = firstSentence.replace(/[.;:,!?]+$/g, "").trim();
+  if (!cleaned) {
+    return "";
+  }
+
+  if (cleaned.length <= 88) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, 85).trimEnd()}...`;
+}
+
+export function resolveAutomationIssueTitle(chosenIssueTitle: string, summary: string): string {
+  const fromSummary = summarizeTitleFromSummary(summary);
+  if (fromSummary.length >= 12) {
+    return fromSummary;
+  }
+
+  const fromChosenTitle = stripActionPrefix(chosenIssueTitle);
+  if (fromChosenTitle) {
+    return fromChosenTitle;
+  }
+
+  return "Follow up captured development note";
+}
+
 function buildPullRequestBody(issueNumber: number): string {
   return `Closes #${issueNumber}\n\nCreated by WalkFlow after caller confirmation.`;
 }
@@ -135,6 +167,7 @@ export async function runGithubWriteSkillForInteraction(
 
   try {
     const transcriptText = transcriptToPlainText(interaction.transcript);
+    const automationIssueTitle = resolveAutomationIssueTitle(interaction.chosenIssueTitle, interaction.summary);
     const requestedAction = parseActionFromChosenIssueTitle(interaction.chosenIssueTitle);
     const shouldAttemptPr = requestedAction === "pr" || Boolean(input.preferPullRequest);
 
@@ -182,7 +215,7 @@ export async function runGithubWriteSkillForInteraction(
 
       const draft = await draftGithubIssue({
         repoName: interaction.chosenRepoName,
-        suggestedTitle: interaction.chosenIssueTitle,
+        suggestedTitle: automationIssueTitle,
         summary: interaction.summary,
         transcript: transcriptText,
         repoContext: fetchedRepoContext
@@ -235,7 +268,7 @@ export async function runGithubWriteSkillForInteraction(
         } else {
           const codexPrEnabled = parseEnabledDefaultTrue(process.env.WALKFLOW_ENABLE_CODEX_PR);
           let resolvedHeadRef = headRef;
-          let prTitle = `Draft: ${stripActionPrefix(interaction.chosenIssueTitle)}`;
+          let prTitle = `Draft: ${automationIssueTitle}`;
           let prBody = buildPullRequestBody(issueNumber);
 
           if (codexPrEnabled) {
@@ -251,7 +284,7 @@ export async function runGithubWriteSkillForInteraction(
                 repoFullName: interaction.chosenRepoName,
                 interactionId: interaction.id,
                 issueNumber,
-                issueTitle: stripActionPrefix(interaction.chosenIssueTitle),
+                issueTitle: automationIssueTitle,
                 issueBody: issueBodyForCodex,
                 interactionSummary: interaction.summary,
                 transcript: transcriptText,

@@ -198,7 +198,6 @@ th {
   display: grid;
   gap: 0.35rem;
   padding: 0.2rem 0 0.9rem;
-  border-bottom: 1px solid var(--border);
 }
 
 .interaction-header h1 {
@@ -634,6 +633,11 @@ th {
   line-height: 1;
 }
 
+.action-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .interaction-panel-actions {
   align-self: start;
 }
@@ -654,6 +658,43 @@ th {
   background: #37414e;
   border-color: #5d6978;
   color: #d5dce4;
+}
+
+.automation-running {
+  margin: 0.35rem 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.automation-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.9rem;
+  height: 0.9rem;
+  aspect-ratio: 1 / 1;
+  border: 2px solid color-mix(in srgb, var(--signal) 35%, var(--border));
+  border-top-color: var(--signal-strong);
+  border-radius: 999px;
+  animation: automation-spin 0.85s linear infinite;
+}
+
+.automation-error {
+  margin: 0.35rem 0 0;
+  color: #f16d6d;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+@keyframes automation-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .dashboard-shell {

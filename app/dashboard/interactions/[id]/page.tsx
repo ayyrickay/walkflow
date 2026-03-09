@@ -8,6 +8,7 @@ import { artifacts, interactions, repositories } from "@/lib/db/schema";
 import { parseTranscriptTurns } from "@/lib/transcript";
 import { RepoOverrideForm } from "@/components/dashboard/repo-override-form";
 import { SummaryOverrideForm } from "@/components/dashboard/summary-override-form";
+import { InteractionActions } from "@/components/dashboard/interaction-actions";
 
 type InteractionStatus = "captured" | "proposed" | "approved" | "needs_review" | "archived" | "completed";
 
@@ -54,8 +55,7 @@ function actionsForStatus(status: InteractionStatus): StatusAction[] {
 
   if (status === "approved") {
     return [
-      { status: "needs_review", label: "Needs Review", style: "review" },
-      { status: "archived", label: "Archive", style: "archive" }
+      { status: "approved", label: "Re-confirm", style: "approved" }
     ];
   }
 
@@ -174,34 +174,7 @@ export default async function InteractionDetailPage({ params }: { params: { id: 
 
         <section className="interaction-panel interaction-panel-flat interaction-panel-actions col-4">
           <h2>Actions</h2>
-          {actions.length === 0 ? (
-            <p>This interaction is completed. Status is now automation-managed.</p>
-          ) : (
-            <div className="action-row">
-              {actions.map((action) => (
-                <form
-                  key={`${interaction.id}-${action.status}`}
-                  method="post"
-                  action={`/api/interactions/${interaction.id}/status`}
-                  className="action-form"
-                >
-                  <input type="hidden" name="status" value={action.status} />
-                  <button
-                    type="submit"
-                    className={`action-button ${
-                      action.style === "approved"
-                        ? "action-button-approved"
-                        : action.style === "review"
-                          ? "action-button-review"
-                          : "action-button-archive"
-                    }`}
-                  >
-                    {action.label}
-                  </button>
-                </form>
-              ))}
-            </div>
-          )}
+          <InteractionActions interactionId={interaction.id} actions={actions} />
         </section>
 
         <section className="interaction-panel interaction-panel-flat interaction-panel-transcript col-8">
