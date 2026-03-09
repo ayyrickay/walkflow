@@ -73,6 +73,7 @@ Never auto-complete uncertain interactions.
 | 7 | UI Edits Session | `codex resume 019ccffa-ca8f-7822-9b92-012763290932` |
 | 8 | Dashboard Confirm Automation Session | `codex resume 019cd049-ab97-70f3-b1c4-f00ae9802734` |
 
-## Follow-up Backlog
+## Up Next
 - Error UX consistency: apply the same in-modal error treatment used on auth forms to other form-driven dashboard actions that can currently surface raw API errors.
 - Security hardening: add CSRF protection on auth POST routes and basic rate limiting/lockout on login attempts.
+- Phone orchestration hardening pass: live phone logic has been tested and works; next focus is reliability polish (idempotent webhook/event handling, failure-path safety defaults to `needs_review`, stronger Twilio request validation/signature checks, and clearer per-call diagnostics).
