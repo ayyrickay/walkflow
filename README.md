@@ -1,68 +1,119 @@
-# WalkFlow MVP Skeleton
+# WalkFlow
 
-Minimal Next.js + TypeScript project scaffold for WalkFlow.
+WalkFlow turns a developer phone call into reviewable GitHub work.
 
-## Included in this skeleton
+Instead of losing ideas during a walk, you call WalkFlow, explain what should change, and get a proposed repo + issue/PR plan. If confidence is low, WalkFlow routes to review instead of automating risky actions.
 
-- App Router structure with login and dashboard pages
-- SQLite + Drizzle schema for accounts, conversations, attempts, actions, and settings
-- Secure cookie session auth (email/password)
-- Conversation and settings API routes
-- GitHub read integration for repository suggestions during proposal generation
-- GitHub write endpoints restricted to one configured demo repository
-- GitHub provider abstraction: direct REST or MCP-backed tool calls
-- Twilio voice TwiML + ConversationRelay websocket capture flow (MVP)
-- OpenAI-backed proposal generation during live Twilio calls
+This repository is the MVP: a phone-first capture flow, proposal generation, safe approval/rejection handling, and a dashboard for review.
 
-## Quick start
+## Why This Exists
 
-1. Install dependencies:
-   - `npm install`
-2. Create env file:
-   - `cp .env.example .env`
-   - set `OPENAI_API_KEY` in `.env`
-   - choose GitHub provider:
-     - `GITHUB_PROVIDER=rest` (default): set `GITHUB_READ_TOKEN`; optional `GITHUB_WRITE_TOKEN`
-     - `GITHUB_PROVIDER=mcp`: set `GITHUB_MCP_URL` (and optional tool names/tokens)
-   - set `GITHUB_WRITE_ALLOWED_REPO=owner/repo` to hard-limit writes to one demo repository
-   - optionally set `TWILIO_TEST_CALLER_E164` and `TWILIO_TEST_USER_EMAIL` for local caller mapping tests
-3. Create SQLite DB and apply migration:
-   - `sqlite3 walkflow.sqlite < drizzle/0001_init.sql`
-   - `sqlite3 walkflow.sqlite < drizzle/0002_interactions.sql`
-4. Seed fake interactions and create a dev login:
-   - `npm run seed`
-5. Run the app:
-   - `npm run dev`
-6. Run the Twilio relay websocket server (separate process):
-   - `npm run relay:dev`
-7. Point Twilio voice webhook to the relay server URL:
-   - `https://<public-host>/api/twilio/voice`
+Great implementation ideas often appear away from the keyboard. WalkFlow captures those ideas at the moment they happen, then converts them into concrete next steps your team can evaluate and ship.
 
-## Dev Login Credentials
+The product promise is simple:
 
-After running `npm run seed`, use these credentials at `/login`:
+- capture fast from voice,
+- structure into actionable work,
+- keep uncertain output in `needs_review`.
+
+## What You Can Demo Today
+
+You can run a full local flow:
+
+1. Start the web app and Twilio relay.
+2. Receive a call through Twilio.
+3. Capture transcript + proposal.
+4. Confirm or reject by voice.
+5. Review the interaction in the dashboard.
+
+## Getting Started (Local Demo)
+
+### 1) Install dependencies
+
+```bash
+npm install
+```
+
+### 2) Create your environment file
+
+```bash
+cp .env.example .env
+```
+
+Then fill in at least:
+
+- `OPENAI_API_KEY`
+- `AUTH_SECRET`
+- `GITHUB_PROVIDER=rest` (default) and `GITHUB_READ_TOKEN`
+- `GITHUB_WRITE_ALLOWED_REPO=owner/repo` (required safety guard for writes)
+
+Optional but useful:
+
+- `GITHUB_WRITE_TOKEN` for issue/PR creation
+- `TWILIO_TEST_CALLER_E164` and `TWILIO_TEST_USER_EMAIL` for deterministic caller mapping during local tests
+
+### 3) Create the SQLite database
+
+```bash
+sqlite3 walkflow.sqlite < drizzle/0001_init.sql
+sqlite3 walkflow.sqlite < drizzle/0002_interactions.sql
+```
+
+### 4) Seed demo data and login
+
+```bash
+npm run seed
+```
+
+### 5) Run the app and relay (two terminals)
+
+Terminal A:
+
+```bash
+npm run dev
+```
+
+Terminal B:
+
+```bash
+npm run relay:dev
+```
+
+### 6) Expose the relay publicly
+
+Twilio must reach your local relay over the public internet. Use a tunnel (for example, ngrok or Cloudflare Tunnel) and note the HTTPS public URL.
+
+### 7) Configure Twilio Voice webhook (required)
+
+In the Twilio Console for your phone number:
+
+- Go to Voice settings
+- Set **A call comes in** to **Webhook**
+- Method: `POST`
+- URL: `https://<your-public-host>/api/twilio/voice`
+
+If this step is skipped, calls will not enter the WalkFlow voice flow.
+
+### 8) Use Walkflow!
+Login at `http://localhost:3000/login` with:
 
 - Email: `demo@walkflow.dev`
 - Password: `walkflow-demo-123`
 
-## Checks
+Then call in to your Twilio number to test Walkflow!
 
-- `npm run lint`
-- `npm run typecheck`
+## Running Tests and Checks
 
-## Notes
+```bash
+npm test
+npm run lint
+npm run typecheck
+```
 
-- On confirm, WalkFlow triggers GitHub write actions asynchronously for approved interactions: create issue first, then optional PR.
-- GitHub write APIs exist for web-initiated asynchronous actions and are hard-limited to `GITHUB_WRITE_ALLOWED_REPO`, in both REST and MCP modes.
-- Optional PR creation requires `WALKFLOW_ENABLE_AUTO_PR=true`.
-- By default, PRs use Codex-generated code on a new branch (`WALKFLOW_ENABLE_CODEX_PR=true`).
-- If Codex PR generation is disabled or fails, WalkFlow can fall back to `WALKFLOW_PR_HEAD_REF=<existing-branch>`.
-- Issues are drafted from summary/transcript context by an issue-writing agent, but raw transcript is not posted to GitHub.
-- MCP mode expects a reachable MCP HTTP endpoint that supports `tools/call`.
-- Twilio ConversationRelay uses `TWILIO_CONVERSATION_RELAY_WSS_URL`.
-- Voice flow: caller speaks notes, says "done", WalkFlow proposes repo + issue, caller says "confirm" or "reject". A second rejection marks the interaction as `needs_review`.
-- Proposal context is updated in place on retries (repo, action type issue/PR, and summary) using the full accumulated conversation notes.
-- In production, set `TWILIO_CONVERSATION_RELAY_WSS_URL` to a public `wss://` endpoint backed by a persistent websocket-capable runtime (do not rely on serverless request-only handlers).
-- Local fastify relay default is `ws://localhost:8081/twilio/conversation-relay/ws` (`TWILIO_RELAY_HOST`/`TWILIO_RELAY_PORT`).
-- The Fastify relay also serves TwiML at `/api/twilio/voice`, so a single tunnel/host can serve both voice webhook and websocket relay.
-- Phone verification is stubbed by marking phone as verified at registration for now.
+## Implementation Notes
+
+Detailed runtime and architecture notes are intentionally kept outside this README:
+
+- GitHub integration direction: [`decisions/0001-github-integration-api-first.md`](./decisions/0001-github-integration-api-first.md)
+- Next.js runtime decision: [`decisions/0002-keep-nextjs-for-mvp.md`](./decisions/0002-keep-nextjs-for-mvp.md)
+- Twilio relay runtime and webhook constraints: [`decisions/0003-twilio-relay-runtime-and-webhook.md`](./decisions/0003-twilio-relay-runtime-and-webhook.md)
