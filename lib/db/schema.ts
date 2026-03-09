@@ -111,7 +111,7 @@ export const interactions = sqliteTable("interactions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id),
   status: text("status", {
-    enum: ["captured", "proposed", "approved", "needs_review", "completed"]
+    enum: ["captured", "proposed", "approved", "needs_review", "archived", "completed"]
   }).notNull().default("captured"),
   transcript: text("transcript").notNull(),
   summary: text("summary").notNull(),

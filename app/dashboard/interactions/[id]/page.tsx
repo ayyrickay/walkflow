@@ -4,7 +4,66 @@ import { notFound } from "next/navigation";
 
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db/client";
-import { artifacts, interactions } from "@/lib/db/schema";
+import { artifacts, interactions, repositories } from "@/lib/db/schema";
+import { parseTranscriptTurns } from "@/lib/transcript";
+import { RepoOverrideForm } from "@/components/dashboard/repo-override-form";
+import { SummaryOverrideForm } from "@/components/dashboard/summary-override-form";
+
+type InteractionStatus = "captured" | "proposed" | "approved" | "needs_review" | "archived" | "completed";
+
+type StatusAction = {
+  status: "approved" | "needs_review" | "archived";
+  label: string;
+  style: "approved" | "review" | "archive";
+};
+
+function statusLabel(status: InteractionStatus) {
+  if (status === "approved") {
+    return "confirmed";
+  }
+  return status.replace(/_/g, " ");
+}
+
+function statusTone(status: InteractionStatus) {
+  if (status === "completed") {
+    return "status-pill-completed";
+  }
+  if (status === "approved") {
+    return "status-pill-confirmed";
+  }
+  if (status === "archived") {
+    return "status-pill-archived";
+  }
+  if (status === "needs_review") {
+    return "status-pill-review";
+  }
+  return "status-pill-default";
+}
+
+function actionsForStatus(status: InteractionStatus): StatusAction[] {
+  if (status === "completed") {
+    return [];
+  }
+
+  if (status === "archived") {
+    return [
+      { status: "needs_review", label: "Unarchive", style: "review" },
+      { status: "approved", label: "Confirm", style: "approved" }
+    ];
+  }
+
+  if (status === "approved") {
+    return [
+      { status: "needs_review", label: "Needs Review", style: "review" },
+      { status: "archived", label: "Archive", style: "archive" }
+    ];
+  }
+
+  return [
+    { status: "approved", label: "Confirm", style: "approved" },
+    { status: "archived", label: "Archive", style: "archive" }
+  ];
+}
 
 export default async function InteractionDetailPage({ params }: { params: { id: string } }) {
   const user = await requireUser();
@@ -22,40 +81,153 @@ export default async function InteractionDetailPage({ params }: { params: { id: 
     .select()
     .from(artifacts)
     .where(eq(artifacts.interactionId, interaction.id));
+  const repoRows = await db
+    .select({ owner: repositories.owner, name: repositories.name })
+    .from(repositories)
+    .where(eq(repositories.userId, user.id));
+  const transcriptTurns = parseTranscriptTurns(interaction.transcript);
+  const actions = actionsForStatus(interaction.status as InteractionStatus);
+  const localRepoNames = repoRows.map((row) => `${row.owner}/${row.name}`);
+  const owners = [...new Set(repoRows.map((row) => row.owner.trim()).filter(Boolean))];
+  const isNeedsReview = interaction.status === "needs_review";
 
   return (
-    <section>
-      <p>
+    <section className="interaction-shell">
+      <div className="interaction-topbar">
         <Link href="/dashboard">Back to dashboard</Link>
-      </p>
-      <h1>{interaction.chosenIssueTitle}</h1>
-      <p>Status: {interaction.status}</p>
-      <p>Repository: {interaction.chosenRepoName}</p>
+        <code className="interaction-id">Interaction {interaction.id.slice(0, 8)}</code>
+      </div>
 
-      <h2>Transcript</h2>
-      <p>{interaction.transcript}</p>
+      <header className="interaction-header">
+        <h1 className="interaction-title">{interaction.chosenIssueTitle}</h1>
+      </header>
 
-      <h2>Summary</h2>
-      <p>{interaction.summary}</p>
+      <div className="interaction-grid interaction-grid-flat">
+        <section className="interaction-panel interaction-panel-flat col-6">
+          <h2>Summary</h2>
+          <div className="meta-cluster">
+            <div className="meta-item">
+              <h3>Status</h3>
+              <span className={`status-pill ${statusTone(interaction.status as InteractionStatus)}`}>
+                {statusLabel(interaction.status as InteractionStatus)}
+              </span>
+            </div>
+            <div className="meta-item">
+              <h3>Repository</h3>
+              <a
+                href={`https://github.com/${interaction.chosenRepoName}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="repo-link"
+              >
+                {interaction.chosenRepoName}
+              </a>
+            </div>
+          </div>
+          {isNeedsReview ? (
+            <div className="repo-override-slot">
+              <details className="repo-override-details">
+                <summary>Edit repository</summary>
+                <RepoOverrideForm
+                  interactionId={interaction.id}
+                  currentRepoName={interaction.chosenRepoName}
+                  owners={owners}
+                  localRepoNames={localRepoNames}
+                />
+              </details>
+            </div>
+          ) : null}
+          {isNeedsReview ? (
+            <SummaryOverrideForm interactionId={interaction.id} currentSummary={interaction.summary} />
+          ) : (
+            <p>{interaction.summary}</p>
+          )}
+        </section>
 
-      <h2>Artifacts</h2>
-      <p>GitHub Issue: {artifact?.githubIssueLink ?? "Not created"}</p>
-      <p>GitHub PR: {artifact?.githubPrLink ?? "Not created"}</p>
-      <p>Code Changes: {artifact?.codeChangesSummary ?? "No code changes summary yet."}</p>
+        <section className="interaction-panel interaction-panel-flat col-6">
+          <h2>Created Artifacts</h2>
+          <div className="artifact-row">
+            <h3>Created Issue</h3>
+            {artifact?.githubIssueLink ? (
+              <a className="artifact-link-button" href={artifact.githubIssueLink} target="_blank" rel="noreferrer noopener">
+                Open Issue
+              </a>
+            ) : (
+              <span className="artifact-empty">Not created</span>
+            )}
+          </div>
+          <div className="artifact-row">
+            <h3>Created PR</h3>
+            {artifact?.githubPrLink ? (
+              <a className="artifact-link-button" href={artifact.githubPrLink} target="_blank" rel="noreferrer noopener">
+                Open PR
+              </a>
+            ) : (
+              <span className="artifact-empty">Not created</span>
+            )}
+          </div>
+          <div className="artifact-row artifact-row-notes">
+            <h3>Automation Notes</h3>
+            <p>{artifact?.codeChangesSummary ?? "No code changes summary yet."}</p>
+          </div>
+        </section>
 
-      <h2>Actions</h2>
-      <form method="post" action={`/api/interactions/${interaction.id}/status`}>
-        <input type="hidden" name="status" value="approved" />
-        <button type="submit">Approve</button>
-      </form>
-      <form method="post" action={`/api/interactions/${interaction.id}/status`}>
-        <input type="hidden" name="status" value="needs_review" />
-        <button type="submit">Needs Review</button>
-      </form>
-      <form method="post" action={`/api/interactions/${interaction.id}/status`}>
-        <input type="hidden" name="status" value="completed" />
-        <button type="submit">Mark Completed</button>
-      </form>
+        <section className="interaction-panel interaction-panel-flat interaction-panel-actions col-4">
+          <h2>Actions</h2>
+          {actions.length === 0 ? (
+            <p>This interaction is completed. Status is now automation-managed.</p>
+          ) : (
+            <div className="action-row">
+              {actions.map((action) => (
+                <form
+                  key={`${interaction.id}-${action.status}`}
+                  method="post"
+                  action={`/api/interactions/${interaction.id}/status`}
+                  className="action-form"
+                >
+                  <input type="hidden" name="status" value={action.status} />
+                  <button
+                    type="submit"
+                    className={`action-button ${
+                      action.style === "approved"
+                        ? "action-button-approved"
+                        : action.style === "review"
+                          ? "action-button-review"
+                          : "action-button-archive"
+                    }`}
+                  >
+                    {action.label}
+                  </button>
+                </form>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="interaction-panel interaction-panel-flat interaction-panel-transcript col-8">
+          <h2>Transcript</h2>
+          <details className="transcript-details">
+            <summary>Show conversation transcript</summary>
+            {transcriptTurns.length > 0 ? (
+              <div className="transcript-thread">
+                {transcriptTurns.map((turn, index) => (
+                  <article
+                    key={`${interaction.id}-turn-${index}`}
+                    className={`transcript-turn transcript-turn-${turn.role}`}
+                  >
+                    <div className="transcript-bubble">
+                      <span className="transcript-speaker">{turn.label}</span>
+                      <p className="transcript-text">{turn.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p>No transcript captured.</p>
+            )}
+          </details>
+        </section>
+      </div>
     </section>
   );
 }

@@ -1,9 +1,28 @@
 import "./globals.css";
 
 import type { Metadata } from "next";
+import { Barlow_Condensed, IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import Link from "next/link";
 
 import { getCurrentUser } from "@/lib/auth";
+
+const brandFont = Barlow_Condensed({
+  subsets: ["latin"],
+  weight: ["700"],
+  variable: "--font-brand"
+});
+
+const sansFont = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-sans"
+});
+
+const monoFont = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-mono"
+});
 
 export const metadata: Metadata = {
   title: "WalkFlow",
@@ -15,13 +34,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang="en" data-theme="dark">
-      <body>
+      <body className={`${brandFont.variable} ${sansFont.variable} ${monoFont.variable}`}>
         <header>
           <nav>
-            <Link href="/">WalkFlow</Link>
-            <span>{user ? `Signed in as ${user.email}` : "Not signed in"}</span>
-            <div>
-              {user ? <Link href="/dashboard">Dashboard</Link> : <Link href="/login">Login</Link>}
+            <Link href="/" className="brand-link">
+              WALKFLOW
+            </Link>
+            <div className="nav-actions">
+              {user ? (
+                <>
+                  <span className="nav-meta">{user.email}</span>
+                  <Link href="/logout">Logout</Link>
+                </>
+              ) : (
+                <Link href="/login">Login</Link>
+              )}
             </div>
           </nav>
         </header>
