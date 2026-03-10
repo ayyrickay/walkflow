@@ -294,14 +294,20 @@ async function flushSession(session: SessionState) {
 
   const serializedTranscript = serializeTranscriptTurns(session.transcript);
   const plainTextTranscript = transcriptToPlainText(serializedTranscript);
-  const summary = plainTextTranscript.length > 0
-    ? "Live call transcript captured and ready for review."
-    : "Live call ended without transcript content.";
+  const updates: Partial<{
+    transcript: string;
+    summary: string;
+  }> = {
+    transcript: serializedTranscript
+  };
 
-  await persistInteractionState(session.interactionId, {
-    transcript: serializedTranscript,
-    summary
-  });
+  if (!session.proposal) {
+    updates.summary = plainTextTranscript.length > 0
+      ? "Live call transcript captured and ready for review."
+      : "Live call ended without transcript content.";
+  }
+
+  await persistInteractionState(session.interactionId, updates);
 
   if (plainTextTranscript.trim()) {
     const callSid = session.callSid || "unknown-call";
