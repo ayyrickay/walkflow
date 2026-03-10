@@ -41,6 +41,7 @@ type SessionState = {
   silenceTimer: NodeJS.Timeout | null;
   silencePromptCount: number;
   hasPendingRetryContext: boolean;
+  awaitingMoreDetailAnswer: boolean;
 };
 
 const liveSessions = new Map<string, SessionState>();
@@ -73,7 +74,8 @@ function getOrCreateSession(ws: WebSocket): SessionState {
     preferredRepoName: null,
     silenceTimer: null,
     silencePromptCount: 0,
-    hasPendingRetryContext: false
+    hasPendingRetryContext: false,
+    awaitingMoreDetailAnswer: false
   };
   socketSessions.set(ws, created);
   return created;
@@ -227,6 +229,10 @@ function satisfiedGoodbyeIntent(text: string) {
     && /\b(goodbye|bye)\b/i.test(text);
 }
 
+function noMoreDetailIntent(text: string) {
+  return /\b(no|nope|nothing else|that'?s all|that is all|done|finished|i'?m done|im done|all good|that should do it|that should do)\b/i.test(text);
+}
+
 function repoNameParts(repoName: string) {
   const segments = repoName.split("/");
   return {
@@ -292,6 +298,10 @@ function processingText() {
   return "Let me summarize that.";
 }
 
+function askForMoreDetailText() {
+  return "Is there anything else to add?";
+}
+
 function proposalText(proposal: VoiceProposal) {
   const action = proposal.actionType === "pr" ? "pull request" : "issue";
   return `I'd put this in ${proposal.repoName} as a ${action}: ${proposal.issueTitle}. ${proposal.summary} Please confirm or reject this summary.`;
@@ -328,6 +338,7 @@ function clearSilenceTimer(session: SessionState) {
 
 async function generateAndPresentProposal(ws: WebSocket, session: SessionState) {
   const transcript = plainTextTranscriptForSession(session);
+  session.awaitingMoreDetailAnswer = false;
   await respond(ws, session, processingText(), { scheduleSilence: false });
 
   const localRepos = await listUserRepoNames(session.userId);
@@ -363,7 +374,7 @@ async function generateAndPresentProposal(ws: WebSocket, session: SessionState) 
     await persistProposal(session.interactionId, proposal);
   }
 
-  await respond(ws, session, proposalText(proposal));
+  await respond(ws, session, proposalText(proposal), { scheduleSilence: false });
 }
 
 async function sendSilencePrompt(session: SessionState) {
@@ -373,10 +384,17 @@ async function sendSilencePrompt(session: SessionState) {
 
   if (
     (
-      (session.phase === "collecting" && session.callerNotes.length > 0)
+      (session.phase === "collecting" && session.callerNotes.length > 0 && !session.awaitingMoreDetailAnswer)
       || (session.phase === "awaiting_retry_context" && session.hasPendingRetryContext)
     )
   ) {
+    if (session.phase === "collecting") {
+      session.awaitingMoreDetailAnswer = true;
+      session.silencePromptCount += 1;
+      await respond(session.socket, session, askForMoreDetailText(), { scheduleSilence: false });
+      return;
+    }
+
     await generateAndPresentProposal(session.socket, session);
     return;
   }
@@ -584,6 +602,8 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
         : finishIntent(message.text)
           ? "finish"
           : "continue"
+    : activeSession.awaitingMoreDetailAnswer && noMoreDetailIntent(message.text)
+      ? "summarize"
     : doneIntent(message.text)
       ? "summarize"
       : finishIntent(message.text)
@@ -592,6 +612,10 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
   if (activeSession.phase === "awaiting_retry_context" && classifiedIntent === "continue") {
     activeSession.hasPendingRetryContext = true;
+  }
+
+  if (activeSession.phase === "collecting" && activeSession.awaitingMoreDetailAnswer && classifiedIntent === "continue") {
+    activeSession.awaitingMoreDetailAnswer = false;
   }
 
   if (activeSession.phase === "awaiting_confirmation") {
@@ -654,11 +678,11 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
       activeSession.phase = "awaiting_retry_context";
       activeSession.hasPendingRetryContext = false;
-      await respond(ws, activeSession, retryPromptText(activeSession.preferredRepoName));
+      await respond(ws, activeSession, retryPromptText(activeSession.preferredRepoName), { scheduleSilence: false });
       return;
     }
 
-    await respond(ws, activeSession, confirmationPromptText());
+    await respond(ws, activeSession, confirmationPromptText(), { scheduleSilence: false });
     return;
   }
 
