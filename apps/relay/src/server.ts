@@ -322,7 +322,7 @@ async function sendSilencePrompt(session: SessionState) {
 
   const text = await conversationReply(session, mode);
   session.silencePromptCount += 1;
-  await respond(session.socket, session, text);
+  await respond(session.socket, session, text, { scheduleSilence: false });
 }
 
 function scheduleSilencePrompt(session: SessionState) {
@@ -387,7 +387,12 @@ function normalizeRepoName(value: string) {
   return value.trim().toLowerCase();
 }
 
-async function respond(ws: WebSocket, session: SessionState, text: string) {
+async function respond(
+  ws: WebSocket,
+  session: SessionState,
+  text: string,
+  options?: { scheduleSilence?: boolean }
+) {
   clearSilenceTimer(session);
   session.transcript = appendTurn(session.transcript, "agent", text);
   logTranscriptTurn(session, "agent", text);
@@ -397,9 +402,12 @@ async function respond(ws: WebSocket, session: SessionState, text: string) {
   sendTokenizedText(ws, text);
 
   if (
-    session.phase === "collecting" ||
-    session.phase === "awaiting_retry_context" ||
-    session.phase === "awaiting_confirmation"
+    options?.scheduleSilence !== false
+    && (
+      session.phase === "collecting"
+      || session.phase === "awaiting_retry_context"
+      || session.phase === "awaiting_confirmation"
+    )
   ) {
     scheduleSilencePrompt(session);
   }
@@ -587,7 +595,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
     const transcript = plainTextTranscriptForSession(activeSession);
     const processingText = await conversationReply(activeSession, "processing_summary");
-    await respond(ws, activeSession, processingText);
+    await respond(ws, activeSession, processingText, { scheduleSilence: false });
     const localRepos = await listUserRepoNames(activeSession.userId);
     const githubUserRepos = await listGithubUserRepoNames(120);
     const githubUserRepoSet = new Set(githubUserRepos.map((repo) => normalizeRepoName(repo)));
