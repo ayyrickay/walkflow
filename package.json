@@ -11,9 +11,7 @@
     "test": "node --import tsx --test test/*.test.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "migrate:transcripts": "node --import tsx scripts/migrate-interaction-transcripts-to-json.ts",
+    "db:setup": "node --env-file=.env scripts/db-setup.mjs",
     "seed": "node scripts/seed.mjs"
   },
   "dependencies": {
@@ -36,7 +34,6 @@
     "@types/react": "^18.3.7",
     "@types/react-dom": "^18.3.0",
     "@types/ws": "^8.18.1",
-    "drizzle-kit": "^0.31.4",
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.5",
     "tsx": "^4.21.0",

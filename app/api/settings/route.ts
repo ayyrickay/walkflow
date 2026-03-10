@@ -8,7 +8,7 @@ import { appSettings } from "@/lib/db/schema";
 
 const patchSchema = z.object({
   allowUnmappedCalls: z.boolean().optional(),
-  demoAccountId: z.string().uuid().nullable().optional()
+  demoAccountId: z.string().min(1).nullable().optional()
 });
 
 export async function GET() {
