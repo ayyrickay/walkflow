@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { fetchJson, toUserErrorMessage } from "@/lib/fetch-json";
+
 type SummaryOverrideFormProps = {
   interactionId: string;
   currentSummary: string;
@@ -18,6 +20,10 @@ export function SummaryOverrideForm(props: SummaryOverrideFormProps) {
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
     setSaving(true);
     setToastError(null);
 
@@ -25,22 +31,16 @@ export function SummaryOverrideForm(props: SummaryOverrideFormProps) {
       const body = new FormData();
       body.set("summary", draftValue);
 
-      const response = await fetch(`/api/interactions/${props.interactionId}/summary`, {
+      await fetchJson(`/api/interactions/${props.interactionId}/summary`, {
         method: "POST",
         body
       });
 
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        setToastError(data.error || "Failed to update summary.");
-        return;
-      }
-
       setSavedValue(draftValue);
       setIsEditing(false);
       router.refresh();
-    } catch {
-      setToastError("Network error while updating summary.");
+    } catch (error) {
+      setToastError(toUserErrorMessage(error, "Network error while updating summary."));
     } finally {
       setSaving(false);
     }

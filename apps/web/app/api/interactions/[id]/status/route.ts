@@ -36,5 +36,5 @@ export async function POST(request: Request, { params }: { params: { id: string 
     await runGithubWriteSkillForInteraction({ interactionId: params.id });
   }
 
-  return NextResponse.redirect(new URL(`/dashboard/interactions/${params.id}`, request.url), { status: 303 });
+  return NextResponse.json({ ok: true, status: parsedStatus.data });
 }

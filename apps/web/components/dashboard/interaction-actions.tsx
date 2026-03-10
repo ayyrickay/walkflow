@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { fetchJson, toUserErrorMessage } from "@/lib/fetch-json";
+
 type InteractionAction = {
   status: "approved" | "needs_review" | "archived";
   label: string;
@@ -41,19 +43,14 @@ export function InteractionActions({ interactionId, actions }: InteractionAction
     formData.set("status", status);
 
     try {
-      const response = await fetch(`/api/interactions/${interactionId}/status`, {
+      await fetchJson(`/api/interactions/${interactionId}/status`, {
         method: "POST",
         body: formData
       });
 
-      if (!response.ok) {
-        throw new Error(`Status update failed (${response.status})`);
-      }
-
       router.refresh();
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Failed to update interaction status.";
-      setError(message);
+      setError(toUserErrorMessage(cause, "Failed to update interaction status."));
     } finally {
       setPendingStatus(null);
     }
