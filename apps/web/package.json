@@ -2,10 +2,10 @@
   "name": "@walkflow/web",
   "private": true,
   "scripts": {
-    "dev": "node --env-file=../../.env ../../node_modules/next/dist/bin/next dev",
-    "build": "node --env-file=../../.env ../../node_modules/next/dist/bin/next build",
-    "start": "node --env-file=../../.env ../../node_modules/next/dist/bin/next start",
-    "lint": "node --env-file=../../.env ../../node_modules/next/dist/bin/next lint",
+    "dev": "node --env-file-if-exists=../../.env ../../node_modules/next/dist/bin/next dev",
+    "build": "node --env-file-if-exists=../../.env ../../node_modules/next/dist/bin/next build",
+    "start": "node --env-file-if-exists=../../.env ../../node_modules/next/dist/bin/next start",
+    "lint": "node --env-file-if-exists=../../.env ../../node_modules/next/dist/bin/next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

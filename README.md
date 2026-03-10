@@ -142,7 +142,24 @@ For Render, the simplest setup is two services from the same repo root:
 - Relay service build: `npm ci && npm run build:relay`
 - Relay service start: `npm run start:relay`
 
-A starter Render blueprint is included at [`render.yaml`](./render.yaml).
+A starter Render blueprint is included at [`render.yaml`](./render.yaml). It provisions:
+
+- one shared Render Postgres database,
+- one Next.js web service,
+- one persistent Fastify relay service,
+- demo-friendly `db:setup` on web deploy so the dashboard has seed data.
+
+For the MVP demo deployment, point Twilio at the relay service webhook:
+
+- `https://<walkflow-relay>.onrender.com/api/twilio/voice`
+
+Then set the remaining Render dashboard env vars prompted by the blueprint:
+
+- `OPENAI_API_KEY`
+- `GITHUB_READ_TOKEN`
+- `GITHUB_WRITE_TOKEN`
+- `GITHUB_WRITE_ALLOWED_REPO` as your throwaway target, for example `owner/walkflow-test`
+- `APP_URL` as your public web URL, for example `https://walkflow-web.onrender.com`
 
 ## Implementation Notes
 

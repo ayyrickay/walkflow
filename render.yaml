@@ -1,14 +1,73 @@
+databases:
+  - name: walkflow-db
+    plan: basic-256mb
+
 services:
   - type: web
     name: walkflow-web
-    env: node
+    runtime: node
     plan: starter
+    preDeployCommand: npm run db:setup
     buildCommand: npm ci && npm run build:web
     startCommand: npm run start:web
+    healthCheckPath: /login
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: walkflow-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_PROVIDER
+        value: rest
+      - key: GITHUB_READ_TOKEN
+        sync: false
+      - key: GITHUB_WRITE_TOKEN
+        sync: false
+      - key: GITHUB_WRITE_ALLOWED_REPO
+        sync: false
+      - key: GITHUB_WRITE_ALLOWED_BASE_BRANCH
+        value: main
+      - key: WALKFLOW_ENABLE_AUTO_PR
+        value: "true"
+      - key: WALKFLOW_ENABLE_CODEX_PR
+        value: "true"
+      - key: APP_URL
+        sync: false
 
   - type: web
     name: walkflow-relay
-    env: node
+    runtime: node
     plan: starter
     buildCommand: npm ci && npm run build:relay
     startCommand: npm run start:relay
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: walkflow-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_PROVIDER
+        value: rest
+      - key: GITHUB_READ_TOKEN
+        sync: false
+      - key: GITHUB_WRITE_TOKEN
+        sync: false
+      - key: GITHUB_WRITE_ALLOWED_REPO
+        sync: false
+      - key: GITHUB_WRITE_ALLOWED_BASE_BRANCH
+        value: main
+      - key: WALKFLOW_ENABLE_AUTO_PR
+        value: "true"
+      - key: WALKFLOW_ENABLE_CODEX_PR
+        value: "true"
+      - key: TWILIO_RELAY_HOST
+        value: 0.0.0.0
