@@ -14,7 +14,9 @@ import {
   suggestGithubRepoNamesFromTextForOwners
 } from "@walkflow/core/lib/github";
 import { normalizePhoneE164 } from "@walkflow/core/lib/phone";
-import { generateVoiceProposal, type VoiceProposal } from "@walkflow/core/lib/openai/proposal";
+import { generateVoiceConversationReply, VoiceAiRequiredError } from "@walkflow/core/lib/openai/conversation";
+import { classifyVoiceIntent, VoiceIntentAiRequiredError } from "@walkflow/core/lib/openai/conversation-intent";
+import { generateVoiceProposal, type VoiceProposal, VoiceProposalAiRequiredError } from "@walkflow/core/lib/openai/proposal";
 import {
   buildRelayEndSessionMessage,
   buildRelayTextTokenMessages,
@@ -26,6 +28,7 @@ import { serializeTranscriptTurns, transcriptToPlainText, type TranscriptTurn } 
 type VoicePhase = "collecting" | "awaiting_confirmation" | "awaiting_retry_context" | "closed";
 
 type SessionState = {
+  socket: WebSocket | null;
   callSid: string | null;
   from: string | null;
   interactionId: string | null;
@@ -37,10 +40,14 @@ type SessionState = {
   proposal: VoiceProposal | null;
   availableRepoNames: string[];
   preferredRepoName: string | null;
+  silenceTimer: NodeJS.Timeout | null;
+  silencePromptCount: number;
 };
 
 const liveSessions = new Map<string, SessionState>();
 const socketSessions = new WeakMap<WebSocket, SessionState>();
+const SILENCE_TIMEOUT_MS = 3_000;
+const ALLOW_DETERMINISTIC_VOICE_FALLBACK = process.env.WALKFLOW_ALLOW_DETERMINISTIC_VOICE_FALLBACK === "true";
 
 function createId() {
   return randomUUID();
@@ -53,6 +60,7 @@ function getOrCreateSession(ws: WebSocket): SessionState {
   }
 
   const created: SessionState = {
+    socket: ws,
     callSid: null,
     from: null,
     interactionId: null,
@@ -63,7 +71,9 @@ function getOrCreateSession(ws: WebSocket): SessionState {
     rejectionCount: 0,
     proposal: null,
     availableRepoNames: [],
-    preferredRepoName: null
+    preferredRepoName: null,
+    silenceTimer: null,
+    silencePromptCount: 0
   };
   socketSessions.set(ws, created);
   return created;
@@ -196,22 +206,6 @@ function sendTokenizedText(ws: WebSocket, text: string) {
   }
 }
 
-function doneIntent(text: string) {
-  return /\b(done|finished|that'?s all|that is all|that should do it|that should do|that covers it|that covers everything|that’s it|that's it|that’s all|can you summarize|could you summarize|want to summarize|what do you think|your turn|go ahead and summarize|ready for a summary|ready now)\b/i.test(text);
-}
-
-function confirmIntent(text: string) {
-  return /\b(confirm|approved?|yes|yeah|yep|looks good|sounds good|that sounds good|that sounds right|that works|works for me|go ahead|ship it|let'?s do it|perfect)\b/i.test(text);
-}
-
-function rejectIntent(text: string) {
-  return /\b(reject|no|nope|change|changes|not right|not quite|try again|different|use another|wrong repo|wrong repository|pick a different repo|needs work)\b/i.test(text);
-}
-
-function finishIntent(text: string) {
-  return /\b(done|hang up|goodbye|bye)\b/i.test(text);
-}
-
 function repoNameParts(repoName: string) {
   const segments = repoName.split("/");
   return {
@@ -245,10 +239,102 @@ function resolveRepoOverride(text: string, availableRepos: string[]) {
   return null;
 }
 
-function proposalSpeech(proposal: VoiceProposal, isRetry: boolean) {
-  const prefix = isRetry ? "All right, here's the updated version." : "Here's what I heard.";
-  const action = proposal.actionType === "pr" ? "pull request" : "issue";
-  return `${prefix} I would put this in ${proposal.repoName} as a ${action}. Title: ${proposal.issueTitle}. Summary: ${proposal.summary}. Does that sound right, or should we make changes?`;
+function plainTextTranscriptForSession(session: SessionState) {
+  return session.callerNotes.join("\n").trim();
+}
+
+async function conversationReply(
+  session: SessionState,
+  mode: Parameters<typeof generateVoiceConversationReply>[0]["mode"]
+) {
+  return generateVoiceConversationReply({
+    mode,
+    transcript: plainTextTranscriptForSession(session),
+    latestCallerMessage: session.callerNotes[session.callerNotes.length - 1] || undefined,
+    proposal: session.proposal,
+    preferredRepoName: session.preferredRepoName,
+    rejectionCount: session.rejectionCount,
+    silencePromptCount: session.silencePromptCount
+  }, {
+    allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
+  });
+}
+
+async function classifyIntentForSession(
+  session: SessionState,
+  latestCallerMessage: string
+) {
+  const phase = session.phase === "awaiting_confirmation"
+    ? "awaiting_confirmation"
+    : session.phase === "awaiting_retry_context"
+      ? "awaiting_retry_context"
+      : "collecting";
+
+  return classifyVoiceIntent({
+    phase,
+    latestCallerMessage,
+    transcript: plainTextTranscriptForSession(session),
+    proposalSummary: session.proposal?.summary,
+    repoName: session.proposal?.repoName || session.preferredRepoName,
+    rejectionCount: session.rejectionCount
+  }, {
+    allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
+  });
+}
+
+async function failClosedForVoiceAi(ws: WebSocket, session: SessionState, error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown voice AI error.";
+  console.error(`[voice-ai-required][${session.callSid || "unknown-call"}] ${message}`);
+  session.phase = "closed";
+  clearSilenceTimer(session);
+
+  if (session.interactionId) {
+    await persistInteractionState(session.interactionId, { status: "needs_review" });
+  }
+
+  const text = "I'm having trouble handling this call live. I saved it for review instead of guessing.";
+  await respondAndEnd(ws, session, text, { reason: "voice_ai_unavailable" });
+}
+
+function isVoiceAiFailure(error: unknown) {
+  return error instanceof VoiceAiRequiredError
+    || error instanceof VoiceIntentAiRequiredError
+    || error instanceof VoiceProposalAiRequiredError;
+}
+
+function clearSilenceTimer(session: SessionState) {
+  if (session.silenceTimer) {
+    clearTimeout(session.silenceTimer);
+    session.silenceTimer = null;
+  }
+}
+
+async function sendSilencePrompt(session: SessionState) {
+  if (!session.socket || session.phase === "closed") {
+    return;
+  }
+
+  const mode = session.phase === "awaiting_confirmation"
+    ? "silence_confirmation"
+    : session.phase === "awaiting_retry_context"
+      ? "silence_retry"
+      : "silence_collecting";
+
+  const text = await conversationReply(session, mode);
+  session.silencePromptCount += 1;
+  await respond(session.socket, session, text);
+}
+
+function scheduleSilencePrompt(session: SessionState) {
+  clearSilenceTimer(session);
+
+  if (session.phase === "closed" || !session.socket) {
+    return;
+  }
+
+  session.silenceTimer = setTimeout(() => {
+    void sendSilencePrompt(session);
+  }, SILENCE_TIMEOUT_MS);
 }
 
 async function persistProposal(interactionId: string, proposal: VoiceProposal) {
@@ -302,12 +388,21 @@ function normalizeRepoName(value: string) {
 }
 
 async function respond(ws: WebSocket, session: SessionState, text: string) {
+  clearSilenceTimer(session);
   session.transcript = appendTurn(session.transcript, "agent", text);
   logTranscriptTurn(session, "agent", text);
   if (session.interactionId) {
     await persistTranscript(session.interactionId, session.transcript);
   }
   sendTokenizedText(ws, text);
+
+  if (
+    session.phase === "collecting" ||
+    session.phase === "awaiting_retry_context" ||
+    session.phase === "awaiting_confirmation"
+  ) {
+    scheduleSilencePrompt(session);
+  }
 }
 
 async function endRelaySession(ws: WebSocket, handoffData?: Record<string, unknown>) {
@@ -363,6 +458,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
   if (message.type === "setup") {
     const session = getOrCreateSession(ws);
+    session.socket = ws;
     const previousCallSid = session.callSid;
     session.callSid = message.callSid;
     session.from = message.from;
@@ -379,18 +475,21 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     liveSessions.set(message.callSid, session);
 
     const ackText = session.interactionId
-      ? "I'm listening. Talk it through however you want. When it feels complete, say something like that's it, or ask me for a summary."
-      : "Connected. I could not map this call to an account yet, but I can still listen.";
+      ? await conversationReply(session, "welcome_mapped")
+      : await conversationReply(session, "welcome_unmapped");
     await respond(ws, session, ackText);
     return;
   }
 
   const session = message.callSid ? liveSessions.get(message.callSid) : null;
   const activeSession = session || getOrCreateSession(ws);
+  activeSession.socket = ws;
   const repoOverride = resolveRepoOverride(message.text, activeSession.availableRepoNames);
 
   activeSession.transcript = appendTurn(activeSession.transcript, "caller", message.text);
   activeSession.callerNotes = [...activeSession.callerNotes, message.text.trim()];
+  activeSession.silencePromptCount = 0;
+  clearSilenceTimer(activeSession);
   logTranscriptTurn(activeSession, "caller", message.text);
   if (activeSession.interactionId) {
     await persistTranscript(activeSession.interactionId, activeSession.transcript);
@@ -401,20 +500,24 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     return;
   }
 
+  const classifiedIntent = await classifyIntentForSession(activeSession, message.text);
+
   if (activeSession.phase === "awaiting_confirmation") {
     if (repoOverride && repoOverride !== activeSession.proposal?.repoName) {
       activeSession.preferredRepoName = repoOverride;
     }
 
-    if (confirmIntent(message.text) || finishIntent(message.text)) {
+    if (classifiedIntent === "confirm" || classifiedIntent === "finish") {
       activeSession.phase = "closed";
+      clearSilenceTimer(activeSession);
       if (activeSession.interactionId) {
         await persistInteractionState(activeSession.interactionId, { status: "approved" });
       }
+      const approvalText = await conversationReply(activeSession, "approval");
       await respondAndEnd(
         ws,
         activeSession,
-        "Sounds good. I marked it approved for follow-up and I'll let you go.",
+        approvalText,
         { reason: "approved" }
       );
       if (activeSession.interactionId) {
@@ -426,17 +529,19 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       return;
     }
 
-    if (rejectIntent(message.text)) {
+    if (classifiedIntent === "reject") {
       activeSession.rejectionCount += 1;
       if (activeSession.rejectionCount >= 2) {
         activeSession.phase = "closed";
+        clearSilenceTimer(activeSession);
         if (activeSession.interactionId) {
           await persistInteractionState(activeSession.interactionId, { status: "needs_review" });
         }
+        const reviewText = await conversationReply(activeSession, "needs_review");
         await respondAndEnd(
           ws,
           activeSession,
-          "Understood. I marked this one for review, so nothing will be automated from here.",
+          reviewText,
           { reason: "needs_review" }
         );
         return;
@@ -444,27 +549,18 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
       activeSession.phase = "awaiting_retry_context";
       if (activeSession.preferredRepoName) {
-        await respond(
-          ws,
-          activeSession,
-          `Okay, I'll switch the repo to ${activeSession.preferredRepoName}. Anything else you want to change before I try again?`
-        );
+        const retryRepoText = await conversationReply(activeSession, "retry_repo_switch");
+        await respond(ws, activeSession, retryRepoText);
         return;
       }
 
-      await respond(
-        ws,
-        activeSession,
-        "Okay, what should I change? You can give me more context or point me at a different repo."
-      );
+      const retryClarifyText = await conversationReply(activeSession, "retry_clarify");
+      await respond(ws, activeSession, retryClarifyText);
       return;
     }
 
-    await respond(
-      ws,
-      activeSession,
-      "If that sounds right, tell me to go ahead. If not, tell me what to change, including the repo if needed."
-    );
+    const confirmationHelpText = await conversationReply(activeSession, "confirmation_help");
+    await respond(ws, activeSession, confirmationHelpText);
     return;
   }
 
@@ -473,11 +569,25 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       activeSession.preferredRepoName = repoOverride;
     }
 
-    if (!doneIntent(message.text)) {
+    if (classifiedIntent === "finish") {
+      activeSession.phase = "closed";
+      clearSilenceTimer(activeSession);
+      await respondAndEnd(
+        ws,
+        activeSession,
+        "All right. I'll save what I captured for review.",
+        { reason: "ended_during_collection" }
+      );
       return;
     }
 
-    const transcript = activeSession.callerNotes.join("\n");
+    if (classifiedIntent !== "summarize") {
+      return;
+    }
+
+    const transcript = plainTextTranscriptForSession(activeSession);
+    const processingText = await conversationReply(activeSession, "processing_summary");
+    await respond(ws, activeSession, processingText);
     const localRepos = await listUserRepoNames(activeSession.userId);
     const githubUserRepos = await listGithubUserRepoNames(120);
     const githubUserRepoSet = new Set(githubUserRepos.map((repo) => normalizeRepoName(repo)));
@@ -495,7 +605,9 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       githubSuggestedRepos
     ).slice(0, 24);
     activeSession.availableRepoNames = availableRepos;
-    const generatedProposal = await generateVoiceProposal(transcript, availableRepos);
+    const generatedProposal = await generateVoiceProposal(transcript, availableRepos, {
+      allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
+    });
     const proposal = activeSession.preferredRepoName
       ? { ...generatedProposal, repoName: activeSession.preferredRepoName }
       : generatedProposal;
@@ -507,11 +619,13 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       await persistProposal(activeSession.interactionId, proposal);
     }
 
-    await respond(ws, activeSession, proposalSpeech(proposal, activeSession.rejectionCount > 0));
+    const proposalText = await conversationReply(activeSession, "proposal");
+    await respond(ws, activeSession, proposalText);
     return;
   }
 
-  await respond(ws, activeSession, "I'm still here. Keep going.");
+  const keepListeningText = await conversationReply(activeSession, "keep_listening");
+  await respond(ws, activeSession, keepListeningText);
 }
 
 async function start() {
@@ -532,6 +646,10 @@ async function start() {
   );
 
   app.get("/health", async () => ({ ok: true }));
+
+  if (!process.env.OPENAI_API_KEY && !ALLOW_DETERMINISTIC_VOICE_FALLBACK) {
+    app.log.warn("OPENAI_API_KEY is not set and deterministic voice fallback is disabled. Live calls will fail closed.");
+  }
 
   const voiceHandler = async (request: { headers: Record<string, string | string[] | undefined> }) => {
     const configured = process.env.TWILIO_CONVERSATION_RELAY_WSS_URL;
@@ -591,6 +709,15 @@ async function start() {
       try {
         await onSocketMessage(socket, rawData);
       } catch (error) {
+        const session = socketSessions.get(socket);
+        if (session && isVoiceAiFailure(error)) {
+          try {
+            await failClosedForVoiceAi(socket, session, error);
+            return;
+          } catch (followupError) {
+            app.log.error({ err: followupError }, "Failed to close voice session after AI error");
+          }
+        }
         app.log.error({ err: error }, "ConversationRelay message handling failed");
       }
     });
@@ -606,6 +733,8 @@ async function start() {
       } catch (error) {
         app.log.error({ err: error }, "Failed to flush ConversationRelay session");
       } finally {
+        clearSilenceTimer(session);
+        session.socket = null;
         socketSessions.delete(socket);
         if (session.callSid) {
           liveSessions.delete(session.callSid);

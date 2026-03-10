@@ -9,7 +9,9 @@ test("generateVoiceProposal fallback chooses only known repositories", async () 
 
   try {
     const availableRepos = ["acme/api", "acme/mobile"];
-    const proposal = await generateVoiceProposal("Need to fix API auth retry behavior", availableRepos);
+    const proposal = await generateVoiceProposal("Need to fix API auth retry behavior", availableRepos, {
+      allowDeterministicFallback: true
+    });
     assert.ok(availableRepos.includes(proposal.repoName));
     assert.equal(proposal.actionType, "pr");
   } finally {
@@ -23,7 +25,9 @@ test("generateVoiceProposal fallback chooses issue for planning-only intent", as
 
   try {
     const availableRepos = ["acme/api", "acme/mobile"];
-    const proposal = await generateVoiceProposal("Please open an issue to investigate auth failures", availableRepos);
+    const proposal = await generateVoiceProposal("Please open an issue to investigate auth failures", availableRepos, {
+      allowDeterministicFallback: true
+    });
     assert.equal(proposal.actionType, "issue");
   } finally {
     process.env.OPENAI_API_KEY = original;

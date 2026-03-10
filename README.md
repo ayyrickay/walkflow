@@ -54,6 +54,8 @@ Optional but useful:
 - `GITHUB_WRITE_TOKEN` for issue/PR creation
 - `TWILIO_TEST_CALLER_E164` and `TWILIO_TEST_USER_EMAIL` for deterministic caller mapping during local tests
 
+For live voice calls, AI is treated as required by default. If `OPENAI_API_KEY` is missing or the live voice model path fails, the relay will fail closed and route the call to review instead of silently switching to deterministic prompts. Only set `WALKFLOW_ALLOW_DETERMINISTIC_VOICE_FALLBACK=true` if you explicitly want that fallback behavior during local debugging.
+
 If you have an older `.env` from a SQLite-based branch, replace any `DATABASE_URL=file:./walkflow.sqlite` value. This app now expects Postgres for local setup.
 
 ### 3) Create an empty local database

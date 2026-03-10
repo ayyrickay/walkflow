@@ -5,10 +5,21 @@ export type VoiceProposal = {
   summary: string;
 };
 
+type VoiceProposalOptions = {
+  allowDeterministicFallback?: boolean;
+};
+
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 function logFallback(reason: string) {
   console.warn(`[openai/proposal] Falling back to deterministic proposal: ${reason}`);
+}
+
+export class VoiceProposalAiRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VoiceProposalAiRequiredError";
+  }
 }
 
 function extractResponseText(body: unknown): string {
@@ -211,12 +222,30 @@ function enforceActionBias(transcript: string, proposal: VoiceProposal): VoicePr
   };
 }
 
-export async function generateVoiceProposal(transcript: string, availableRepos: string[]): Promise<VoiceProposal> {
+function withFallbackOrThrow(
+  transcript: string,
+  availableRepos: string[],
+  options: VoiceProposalOptions | undefined,
+  reason: string
+) {
+  const rankedRepos = rankAvailableRepos(transcript, availableRepos);
+  if (options?.allowDeterministicFallback) {
+    logFallback(reason);
+    return fallbackProposal(transcript, rankedRepos);
+  }
+
+  throw new VoiceProposalAiRequiredError(reason);
+}
+
+export async function generateVoiceProposal(
+  transcript: string,
+  availableRepos: string[],
+  options?: VoiceProposalOptions
+): Promise<VoiceProposal> {
   const rankedRepos = rankAvailableRepos(transcript, availableRepos);
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    logFallback("OPENAI_API_KEY is not set");
-    return fallbackProposal(transcript, rankedRepos);
+    return withFallbackOrThrow(transcript, rankedRepos, options, "OPENAI_API_KEY is required for live voice proposal generation.");
   }
 
   try {
@@ -271,29 +300,35 @@ export async function generateVoiceProposal(transcript: string, availableRepos: 
     });
 
     if (!response.ok) {
-      logFallback(`OpenAI response not ok (${response.status})`);
-      return fallbackProposal(transcript, rankedRepos);
+      return withFallbackOrThrow(
+        transcript,
+        rankedRepos,
+        options,
+        `OpenAI response not ok (${response.status})`
+      );
     }
 
     const body = await response.json() as unknown;
     const outputText = extractResponseText(body);
     if (!outputText) {
       const shape = body && typeof body === "object" ? Object.keys(body as Record<string, unknown>).join(",") : typeof body;
-      logFallback(`OpenAI response missing text (keys: ${shape})`);
-      return fallbackProposal(transcript, rankedRepos);
+      return withFallbackOrThrow(
+        transcript,
+        rankedRepos,
+        options,
+        `OpenAI response missing text (keys: ${shape})`
+      );
     }
 
     const parsed = JSON.parse(outputText);
     const normalized = normalizeProposal(parsed);
     if (!normalized) {
-      logFallback("OpenAI output did not match expected schema");
-      return fallbackProposal(transcript, rankedRepos);
+      return withFallbackOrThrow(transcript, rankedRepos, options, "OpenAI output did not match expected schema");
     }
 
     const withKnownRepo = enforceKnownRepository(transcript, rankedRepos, normalized);
     return enforceActionBias(transcript, withKnownRepo);
   } catch {
-    logFallback("OpenAI request failed unexpectedly");
-    return fallbackProposal(transcript, rankedRepos);
+    return withFallbackOrThrow(transcript, rankedRepos, options, "OpenAI request failed unexpectedly");
   }
 }
