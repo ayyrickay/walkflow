@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: walkflow-web
+    env: node
+    plan: starter
+    buildCommand: npm ci && npm run build:web
+    startCommand: npm run start:web
+
+  - type: web
+    name: walkflow-relay
+    env: node
+    plan: starter
+    buildCommand: npm ci && npm run build:relay
+    startCommand: npm run start:relay

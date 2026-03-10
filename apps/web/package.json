@@ -1,0 +1,22 @@
+{
+  "name": "@walkflow/web",
+  "private": true,
+  "scripts": {
+    "dev": "node --env-file=../../.env ../../node_modules/next/dist/bin/next dev",
+    "build": "node --env-file=../../.env ../../node_modules/next/dist/bin/next build",
+    "start": "node --env-file=../../.env ../../node_modules/next/dist/bin/next start",
+    "lint": "node --env-file=../../.env ../../node_modules/next/dist/bin/next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@walkflow/core": "*",
+    "@walkflow/db": "*",
+    "bcryptjs": "^2.4.3",
+    "drizzle-orm": "^0.44.5",
+    "jose": "^6.1.0",
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  }
+}

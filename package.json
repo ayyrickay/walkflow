@@ -2,17 +2,29 @@
   "name": "walkflow",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@11.9.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "relay:dev": "node --env-file=.env --import tsx scripts/twilio-relay-fastify.ts",
-    "relay:start": "node --import tsx scripts/twilio-relay-fastify.ts",
-    "build": "next build",
-    "start": "next start",
-    "test": "node --import tsx --test test/*.test.ts",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "db:setup": "node --env-file=.env scripts/db-setup.mjs",
-    "seed": "node scripts/seed.mjs"
+    "dev": "npm run dev --workspace @walkflow/web",
+    "dev:web": "npm run dev --workspace @walkflow/web",
+    "dev:relay": "npm run dev --workspace @walkflow/relay",
+    "dev:all": "turbo run dev --parallel --filter=@walkflow/web --filter=@walkflow/relay",
+    "build": "npm run build --workspaces --if-present",
+    "build:web": "npm run build --workspace @walkflow/web",
+    "build:relay": "npm run build --workspace @walkflow/relay",
+    "build:all": "turbo run build",
+    "start": "npm run start --workspace @walkflow/web",
+    "start:web": "npm run start --workspace @walkflow/web",
+    "start:relay": "npm run start --workspace @walkflow/relay",
+    "test": "npm run test --workspaces --if-present",
+    "test:all": "turbo run test typecheck lint",
+    "lint": "npm run lint --workspace @walkflow/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:setup": "npm run db:setup --workspace @walkflow/db",
+    "seed": "npm run seed --workspace @walkflow/db"
   },
   "dependencies": {
     "@fastify/websocket": "^11.2.0",
@@ -37,6 +49,7 @@
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.5",
     "tsx": "^4.21.0",
+    "turbo": "^2.8.15",
     "typescript": "^5.5.4"
   }
 }
