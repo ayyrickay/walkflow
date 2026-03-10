@@ -704,6 +704,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     }
 
     if (classifiedIntent !== "summarize") {
+      scheduleSilencePrompt(activeSession);
       return;
     }
 
@@ -712,7 +713,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     return;
   }
 
-  await respond(ws, activeSession, "I'm still here. Keep going.", { scheduleSilence: false });
+  scheduleSilencePrompt(activeSession);
 }
 
 async function start() {
