@@ -22,6 +22,7 @@ import {
 } from "@walkflow/core/lib/twilio/conversation-relay";
 import { triggerGithubWriteSkillForInteraction } from "@walkflow/core/lib/skills/github-write";
 import { serializeTranscriptTurns, transcriptToPlainText, type TranscriptTurn } from "@walkflow/core/lib/transcript";
+import { buildProposalTranscript } from "./proposal-transcript";
 
 type VoicePhase = "collecting" | "awaiting_confirmation" | "awaiting_retry_context" | "closed";
 
@@ -267,7 +268,7 @@ function resolveRepoOverride(text: string, availableRepos: string[]) {
 }
 
 function plainTextTranscriptForSession(session: SessionState) {
-  return session.callerNotes.join("\n").trim();
+  return buildProposalTranscript(session.callerNotes);
 }
 
 async function failClosedForVoiceAi(ws: WebSocket, session: SessionState, error: unknown) {
