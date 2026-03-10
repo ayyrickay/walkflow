@@ -175,17 +175,22 @@ async function flushSessionToDb(session: SessionState) {
   }
 
   const finalTranscript = serializeTranscriptTurns(session.transcript);
-  const summary = session.transcript.length > 0
-    ? "Live call transcript captured and ready for review."
-    : "Live call ended without transcript content.";
+  const updates: {
+    transcript: string;
+    summary?: string;
+    updatedAt: Date;
+  } = {
+    transcript: finalTranscript,
+    updatedAt: new Date()
+  };
+
+  if (session.transcript.length === 0) {
+    updates.summary = "Live call ended without transcript content.";
+  }
 
   await db
     .update(interactions)
-    .set({
-      transcript: finalTranscript,
-      summary,
-      updatedAt: new Date()
-    })
+    .set(updates)
     .where(eq(interactions.id, session.interactionId));
 }
 
