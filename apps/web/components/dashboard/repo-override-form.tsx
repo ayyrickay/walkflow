@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
 
+import { fetchJson, toUserErrorMessage } from "@/lib/fetch-json";
+
 type RepoOverrideFormProps = {
   interactionId: string;
   currentRepoName: string;
@@ -52,18 +54,15 @@ export function RepoOverrideForm(props: RepoOverrideFormProps) {
           params.set("owners", props.owners.join(","));
         }
 
-        const response = await fetch(`/api/github/repositories/suggest?${params.toString()}`, {
+        const data = await fetchJson<{ repoNames?: string[] }>(`/api/github/repositories/suggest?${params.toString()}`, {
           signal: controller.signal
         });
-
-        if (!response.ok) {
-          setRemoteSuggestions([]);
+        setRemoteSuggestions(data.repoNames ?? []);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
           return;
         }
 
-        const data = (await response.json()) as { repoNames?: string[] };
-        setRemoteSuggestions(data.repoNames ?? []);
-      } catch {
         setRemoteSuggestions([]);
       } finally {
         setLoading(false);
@@ -93,6 +92,10 @@ export function RepoOverrideForm(props: RepoOverrideFormProps) {
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
     setSaving(true);
     setToastError(null);
 
@@ -100,16 +103,10 @@ export function RepoOverrideForm(props: RepoOverrideFormProps) {
       const body = new FormData();
       body.set("repoName", value);
 
-      const response = await fetch(`/api/interactions/${props.interactionId}/repo`, {
+      await fetchJson(`/api/interactions/${props.interactionId}/repo`, {
         method: "POST",
         body
       });
-
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        setToastError(data.error || "Failed to update repository.");
-        return;
-      }
 
       const container = rootRef.current?.closest("details");
       if (container instanceof HTMLDetailsElement) {
@@ -117,8 +114,8 @@ export function RepoOverrideForm(props: RepoOverrideFormProps) {
       }
 
       router.refresh();
-    } catch {
-      setToastError("Network error while updating repository.");
+    } catch (error) {
+      setToastError(toUserErrorMessage(error, "Network error while updating repository."));
     } finally {
       setSaving(false);
     }
