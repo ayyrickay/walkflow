@@ -46,7 +46,7 @@ type SessionState = {
 
 const liveSessions = new Map<string, SessionState>();
 const socketSessions = new WeakMap<WebSocket, SessionState>();
-const SILENCE_TIMEOUT_MS = Number(process.env.WALKFLOW_VOICE_SILENCE_MS || 2_000);
+const SILENCE_TIMEOUT_MS = Number(process.env.WALKFLOW_VOICE_SILENCE_MS || 3_000);
 const ALLOW_DETERMINISTIC_VOICE_FALLBACK = process.env.WALKFLOW_ALLOW_DETERMINISTIC_VOICE_FALLBACK === "true";
 
 function createId() {
@@ -322,7 +322,7 @@ function approvalText() {
 }
 
 function needsReviewText() {
-  return "Understood. I marked it for review, so nothing will run automatically.";
+  return "I'm going to move this to review so that you can make more precise changes.";
 }
 
 function endedWithoutConfirmationText() {
@@ -384,11 +384,11 @@ async function sendSilencePrompt(session: SessionState) {
 
   if (
     (
-      (session.phase === "collecting" && session.callerNotes.length > 0 && !session.awaitingMoreDetailAnswer)
+      (session.phase === "collecting" && session.callerNotes.length > 0)
       || (session.phase === "awaiting_retry_context" && session.hasPendingRetryContext)
     )
   ) {
-    if (session.phase === "collecting") {
+    if (!session.awaitingMoreDetailAnswer) {
       session.awaitingMoreDetailAnswer = true;
       session.silencePromptCount += 1;
       await respond(session.socket, session, askForMoreDetailText(), { scheduleSilence: false });
@@ -614,7 +614,11 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     activeSession.hasPendingRetryContext = true;
   }
 
-  if (activeSession.phase === "collecting" && activeSession.awaitingMoreDetailAnswer && classifiedIntent === "continue") {
+  if (
+    (activeSession.phase === "collecting" || activeSession.phase === "awaiting_retry_context")
+    && activeSession.awaitingMoreDetailAnswer
+    && classifiedIntent === "continue"
+  ) {
     activeSession.awaitingMoreDetailAnswer = false;
   }
 
@@ -678,6 +682,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
       activeSession.phase = "awaiting_retry_context";
       activeSession.hasPendingRetryContext = false;
+      activeSession.awaitingMoreDetailAnswer = false;
       await respond(ws, activeSession, retryPromptText(activeSession.preferredRepoName), { scheduleSilence: false });
       return;
     }
@@ -709,6 +714,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     }
 
     activeSession.hasPendingRetryContext = false;
+    activeSession.awaitingMoreDetailAnswer = false;
     await generateAndPresentProposal(ws, activeSession);
     return;
   }

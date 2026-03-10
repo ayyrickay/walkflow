@@ -65,13 +65,27 @@ function normalizeProposal(value: unknown): VoiceProposal | null {
   const repoName = typeof proposal.repoName === "string" ? proposal.repoName.trim() : "";
   const actionType = proposal.actionType === "pr" ? "pr" : proposal.actionType === "issue" ? "issue" : null;
   const issueTitle = typeof proposal.issueTitle === "string" ? proposal.issueTitle.trim() : "";
-  const summary = typeof proposal.summary === "string" ? proposal.summary.trim() : "";
+  const summary = typeof proposal.summary === "string" ? trimSummaryWords(proposal.summary) : "";
 
   if (!repoName || !actionType || !issueTitle || !summary) {
     return null;
   }
 
   return { repoName, actionType, issueTitle, summary };
+}
+
+function trimSummaryWords(summary: string, maxWords = 200) {
+  const normalized = summary.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+
+  const words = normalized.split(" ");
+  if (words.length <= maxWords) {
+    return normalized;
+  }
+
+  return words.slice(0, maxWords).join(" ");
 }
 
 function inferActionTypeFromTranscript(transcript: string): "issue" | "pr" {
@@ -201,7 +215,7 @@ function enforceKnownRepository(
 function fallbackProposal(transcript: string, availableRepos: string[]): VoiceProposal {
   const trimmed = transcript.trim();
   const summary = trimmed.length > 0
-    ? trimmed.slice(0, 260)
+    ? trimSummaryWords(trimmed)
     : "Caller shared a coding idea that needs review.";
   const ranked = rankAvailableRepos(transcript, availableRepos);
   const circulatingMagazines = ranked.find((repo) => /circulating[- ]magazines/i.test(repo));
