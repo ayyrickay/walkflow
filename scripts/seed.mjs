@@ -1,8 +1,16 @@
-import { createClient } from "@libsql/client";
 import bcrypt from "bcryptjs";
+import { Pool } from "pg";
 
-const databaseUrl = process.env.DATABASE_URL || "file:./walkflow.sqlite";
-const client = createClient({ url: databaseUrl });
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is required");
+}
+
+const sslEnabled = (process.env.DATABASE_SSL || "").trim().toLowerCase() === "true";
+const client = new Pool({
+  connectionString: databaseUrl,
+  ssl: sslEnabled ? { rejectUnauthorized: false } : undefined
+});
 
 const demoUserId = "user-demo-001";
 const demoPassword = "walkflow-demo-123";
@@ -70,10 +78,10 @@ const artifacts = [
 
 async function main() {
   const demoPasswordHash = await bcrypt.hash(demoPassword, 12);
-  await client.execute(
+  await client.query(
     `
       INSERT INTO users (id, email, name, password_hash, phone_e164, phone_verified_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT(id) DO UPDATE SET
         email=excluded.email,
         name=excluded.name,
@@ -81,7 +89,7 @@ async function main() {
         phone_e164=excluded.phone_e164,
         phone_verified_at=excluded.phone_verified_at
     `,
-    [demoUserId, "demo@walkflow.dev", "Demo User", demoPasswordHash, "+14155550100", Date.now()]
+    [demoUserId, "demo@walkflow.dev", "Demo User", demoPasswordHash, "+14155550100", new Date()]
   );
   const targetUserId = demoUserId;
 
@@ -92,11 +100,11 @@ async function main() {
   ];
 
   for (const repository of repositories) {
-    await client.execute(`
+    await client.query(`
       INSERT INTO repositories (
         id, user_id, provider, owner, name, default_branch, is_active, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT(id) DO UPDATE SET
         user_id=excluded.user_id,
         provider=excluded.provider,
@@ -111,17 +119,17 @@ async function main() {
       repository.owner,
       repository.name,
       repository.defaultBranch,
-      1,
-      Date.now()
+      true,
+      new Date()
     ]);
   }
 
   for (const interaction of interactions) {
-    await client.execute(`
+    await client.query(`
       INSERT INTO interactions (
         id, user_id, status, transcript, summary, chosen_repo_name, chosen_issue_title, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status,
         transcript=excluded.transcript,
@@ -137,17 +145,17 @@ async function main() {
       interaction.summary,
       interaction.chosenRepoName,
       interaction.chosenIssueTitle,
-      Date.now(),
-      Date.now()
+      new Date(),
+      new Date()
     ]);
   }
 
   for (const artifact of artifacts) {
-    await client.execute(`
+    await client.query(`
       INSERT INTO artifacts (
         id, interaction_id, github_issue_link, github_pr_link, code_changes_summary, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT(id) DO UPDATE SET
         github_issue_link=excluded.github_issue_link,
         github_pr_link=excluded.github_pr_link,
@@ -159,13 +167,14 @@ async function main() {
       artifact.githubIssueLink,
       artifact.githubPrLink,
       artifact.codeChangesSummary,
-      Date.now(),
-      Date.now()
+      new Date(),
+      new Date()
     ]);
   }
 
   console.log("Seeded users, repositories, interactions, and artifacts.");
   console.log("Demo login: demo@walkflow.dev / walkflow-demo-123");
+  await client.end();
 }
 
 main().catch((error) => {

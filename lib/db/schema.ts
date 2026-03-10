@@ -1,35 +1,28 @@
-import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { boolean, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
   passwordHash: text("password_hash").notNull(),
   phoneE164: text("phone_e164").unique(),
-  phoneVerifiedAt: integer("phone_verified_at", { mode: "timestamp_ms" }),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`)
+  phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
 });
 
-export const repositories = sqliteTable("repositories", {
+export const repositories = pgTable("repositories", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id),
   provider: text("provider").notNull().default("github"),
   owner: text("owner").notNull(),
   name: text("name").notNull(),
   defaultBranch: text("default_branch").notNull().default("main"),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`)
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
 });
 
-export const conversations = sqliteTable("conversations", {
+export const conversations = pgTable("conversations", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id),
   twilioCallSid: text("twilio_call_sid").unique(),
@@ -43,13 +36,11 @@ export const conversations = sqliteTable("conversations", {
   rawTranscript: text("raw_transcript"),
   finalSummary: text("final_summary"),
   mappedRepositoryId: text("mapped_repository_id").references(() => repositories.id),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`),
-  endedAt: integer("ended_at", { mode: "timestamp_ms" })
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" })
 });
 
-export const proposalAttempts = sqliteTable("proposal_attempts", {
+export const proposalAttempts = pgTable("proposal_attempts", {
   id: text("id").primaryKey(),
   conversationId: text("conversation_id").notNull().references(() => conversations.id),
   attemptNumber: integer("attempt_number").notNull(),
@@ -63,13 +54,11 @@ export const proposalAttempts = sqliteTable("proposal_attempts", {
     enum: ["pending", "confirmed", "rejected"]
   }).notNull().default("pending"),
   decisionReason: text("decision_reason"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`),
-  decidedAt: integer("decided_at", { mode: "timestamp_ms" })
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" })
 });
 
-export const actions = sqliteTable("actions", {
+export const actions = pgTable("actions", {
   id: text("id").primaryKey(),
   conversationId: text("conversation_id").notNull().references(() => conversations.id),
   proposalAttemptId: text("proposal_attempt_id").references(() => proposalAttempts.id),
@@ -79,35 +68,27 @@ export const actions = sqliteTable("actions", {
     enum: ["queued", "succeeded", "failed", "skipped"]
   }).notNull().default("queued"),
   errorMessage: text("error_message"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`),
-  completedAt: integer("completed_at", { mode: "timestamp_ms" })
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" })
 });
 
-export const conversationEvents = sqliteTable("conversation_events", {
+export const conversationEvents = pgTable("conversation_events", {
   id: text("id").primaryKey(),
   conversationId: text("conversation_id").notNull().references(() => conversations.id),
   source: text("source", { enum: ["twilio", "agent", "system", "user"] }).notNull(),
   eventType: text("event_type").notNull(),
   payloadJson: text("payload_json").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`)
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
 });
 
-export const appSettings = sqliteTable("app_settings", {
+export const appSettings = pgTable("app_settings", {
   id: text("id").primaryKey().default("default"),
-  allowUnmappedCalls: integer("allow_unmapped_calls", { mode: "boolean" })
-    .notNull()
-    .default(false),
+  allowUnmappedCalls: boolean("allow_unmapped_calls").notNull().default(false),
   demoAccountId: text("demo_account_id").references(() => users.id),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`)
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
 });
 
-export const interactions = sqliteTable("interactions", {
+export const interactions = pgTable("interactions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id),
   status: text("status", {
@@ -117,15 +98,11 @@ export const interactions = sqliteTable("interactions", {
   summary: text("summary").notNull(),
   chosenRepoName: text("chosen_repo_name").notNull(),
   chosenIssueTitle: text("chosen_issue_title").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`)
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
 });
 
-export const artifacts = sqliteTable("artifacts", {
+export const artifacts = pgTable("artifacts", {
   id: text("id").primaryKey(),
   interactionId: text("interaction_id")
     .notNull()
@@ -134,10 +111,6 @@ export const artifacts = sqliteTable("artifacts", {
   githubIssueLink: text("github_issue_link"),
   githubPrLink: text("github_pr_link"),
   codeChangesSummary: text("code_changes_summary"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch('subsec') * 1000)`)
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow()
 });

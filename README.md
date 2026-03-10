@@ -42,6 +42,7 @@ cp .env.example .env
 
 Then fill in at least:
 
+- `DATABASE_URL` (shared Postgres connection string)
 - `OPENAI_API_KEY`
 - `AUTH_SECRET`
 - `GITHUB_PROVIDER=rest` (default) and `GITHUB_READ_TOKEN`
@@ -49,14 +50,14 @@ Then fill in at least:
 
 Optional but useful:
 
+- `DATABASE_SSL=true` if your Postgres provider requires TLS
 - `GITHUB_WRITE_TOKEN` for issue/PR creation
 - `TWILIO_TEST_CALLER_E164` and `TWILIO_TEST_USER_EMAIL` for deterministic caller mapping during local tests
 
-### 3) Create the SQLite database
+### 3) Run database migrations
 
 ```bash
-sqlite3 walkflow.sqlite < drizzle/0001_init.sql
-sqlite3 walkflow.sqlite < drizzle/0002_interactions.sql
+npm run db:migrate
 ```
 
 ### 4) Seed demo data and login
