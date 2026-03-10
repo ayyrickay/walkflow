@@ -35,6 +35,8 @@ type SessionState = {
   phase: VoicePhase;
   rejectionCount: number;
   proposal: VoiceProposal | null;
+  availableRepoNames: string[];
+  preferredRepoName: string | null;
 };
 
 const liveSessions = new Map<string, SessionState>();
@@ -59,7 +61,9 @@ function getOrCreateSession(ws: WebSocket): SessionState {
     callerNotes: [],
     phase: "collecting",
     rejectionCount: 0,
-    proposal: null
+    proposal: null,
+    availableRepoNames: [],
+    preferredRepoName: null
   };
   socketSessions.set(ws, created);
   return created;
@@ -193,25 +197,58 @@ function sendTokenizedText(ws: WebSocket, text: string) {
 }
 
 function doneIntent(text: string) {
-  return /\b(done|finished|that'?s all|submit|ready)\b/i.test(text);
+  return /\b(done|finished|that'?s all|that is all|that should do it|that should do|that covers it|that covers everything|that’s it|that's it|that’s all|can you summarize|could you summarize|want to summarize|what do you think|your turn|go ahead and summarize|ready for a summary|ready now)\b/i.test(text);
 }
 
 function confirmIntent(text: string) {
-  return /\b(confirm|approved?|yes|ship it|sounds good)\b/i.test(text);
+  return /\b(confirm|approved?|yes|yeah|yep|looks good|sounds good|that sounds good|that sounds right|that works|works for me|go ahead|ship it|let'?s do it|perfect)\b/i.test(text);
 }
 
 function rejectIntent(text: string) {
-  return /\b(reject|no|change|not right|try again)\b/i.test(text);
+  return /\b(reject|no|nope|change|changes|not right|not quite|try again|different|use another|wrong repo|wrong repository|pick a different repo|needs work)\b/i.test(text);
 }
 
 function finishIntent(text: string) {
   return /\b(done|hang up|goodbye|bye)\b/i.test(text);
 }
 
+function repoNameParts(repoName: string) {
+  const segments = repoName.split("/");
+  return {
+    full: normalizeRepoName(repoName),
+    short: normalizeRepoName(segments[segments.length - 1] || repoName)
+  };
+}
+
+function resolveRepoOverride(text: string, availableRepos: string[]) {
+  const normalizedText = text.toLowerCase();
+
+  for (const repoName of availableRepos) {
+    const parts = repoNameParts(repoName);
+    if (normalizedText.includes(parts.full)) {
+      return repoName;
+    }
+  }
+
+  const words = normalizedText
+    .replace(/[^a-z0-9/_\-\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  for (const repoName of availableRepos) {
+    const parts = repoNameParts(repoName);
+    if (words.includes(parts.short)) {
+      return repoName;
+    }
+  }
+
+  return null;
+}
+
 function proposalSpeech(proposal: VoiceProposal, isRetry: boolean) {
-  const prefix = isRetry ? "Updated context." : "Proposed context.";
-  const action = proposal.actionType === "pr" ? "open a pull request" : "open an issue";
-  return `${prefix} Repo ${proposal.repoName}. Action: ${action}. Title: ${proposal.issueTitle}. Summary: ${proposal.summary}. Say confirm or reject.`;
+  const prefix = isRetry ? "All right, here's the updated version." : "Here's what I heard.";
+  const action = proposal.actionType === "pr" ? "pull request" : "issue";
+  return `${prefix} I would put this in ${proposal.repoName} as a ${action}. Title: ${proposal.issueTitle}. Summary: ${proposal.summary}. Does that sound right, or should we make changes?`;
 }
 
 async function persistProposal(interactionId: string, proposal: VoiceProposal) {
@@ -336,7 +373,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     liveSessions.set(message.callSid, session);
 
     const ackText = session.interactionId
-      ? "Connected. Share your coding thought. When ready for a proposal, say done."
+      ? "I'm listening. Talk it through however you want. When it feels complete, say something like that's it, or ask me for a summary."
       : "Connected. I could not map this call to an account yet, but I can still listen.";
     await respond(ws, session, ackText);
     return;
@@ -344,6 +381,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
   const session = message.callSid ? liveSessions.get(message.callSid) : null;
   const activeSession = session || getOrCreateSession(ws);
+  const repoOverride = resolveRepoOverride(message.text, activeSession.availableRepoNames);
 
   activeSession.transcript = appendTurn(activeSession.transcript, "caller", message.text);
   activeSession.callerNotes = [...activeSession.callerNotes, message.text.trim()];
@@ -358,6 +396,10 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
   }
 
   if (activeSession.phase === "awaiting_confirmation") {
+    if (repoOverride && repoOverride !== activeSession.proposal?.repoName) {
+      activeSession.preferredRepoName = repoOverride;
+    }
+
     if (confirmIntent(message.text) || finishIntent(message.text)) {
       activeSession.phase = "closed";
       if (activeSession.interactionId) {
@@ -366,7 +408,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       await respondAndEnd(
         ws,
         activeSession,
-        "Confirmed. I marked this interaction as approved for post-call action. Ending the call now.",
+        "Sounds good. I marked it approved for follow-up and I'll let you go.",
         { reason: "approved" }
       );
       if (activeSession.interactionId) {
@@ -388,27 +430,44 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
         await respondAndEnd(
           ws,
           activeSession,
-          "Understood. I marked this interaction as needs review and will not automate repo actions. Ending the call now.",
+          "Understood. I marked this one for review, so nothing will be automated from here.",
           { reason: "needs_review" }
         );
         return;
       }
 
       activeSession.phase = "awaiting_retry_context";
-      await respond(ws, activeSession, "Rejected. Share extra context, then say done for a revised proposal.");
+      if (activeSession.preferredRepoName) {
+        await respond(
+          ws,
+          activeSession,
+          `Okay, I'll switch the repo to ${activeSession.preferredRepoName}. Anything else you want to change before I try again?`
+        );
+        return;
+      }
+
+      await respond(
+        ws,
+        activeSession,
+        "Okay, what should I change? You can give me more context or point me at a different repo."
+      );
       return;
     }
 
-    await respond(ws, activeSession, "Please say confirm to approve or reject to revise.");
+    await respond(
+      ws,
+      activeSession,
+      "If that sounds right, tell me to go ahead. If not, tell me what to change, including the repo if needed."
+    );
     return;
   }
 
   if (activeSession.phase === "collecting" || activeSession.phase === "awaiting_retry_context") {
+    if (repoOverride) {
+      activeSession.preferredRepoName = repoOverride;
+    }
+
     if (!doneIntent(message.text)) {
-      const collectingReply = activeSession.phase === "awaiting_retry_context"
-        ? "Captured more context. Say done when ready for an updated proposal."
-        : "Captured. Keep going, then say done when you want a proposal.";
-      await respond(ws, activeSession, collectingReply);
       return;
     }
 
@@ -429,9 +488,14 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       mergeUniqueRepoNames(localReposFiltered, githubUserRepos),
       githubSuggestedRepos
     ).slice(0, 24);
-    const proposal = await generateVoiceProposal(transcript, availableRepos);
+    activeSession.availableRepoNames = availableRepos;
+    const generatedProposal = await generateVoiceProposal(transcript, availableRepos);
+    const proposal = activeSession.preferredRepoName
+      ? { ...generatedProposal, repoName: activeSession.preferredRepoName }
+      : generatedProposal;
     activeSession.proposal = proposal;
     activeSession.phase = "awaiting_confirmation";
+    activeSession.preferredRepoName = null;
 
     if (activeSession.interactionId) {
       await persistProposal(activeSession.interactionId, proposal);
@@ -441,7 +505,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     return;
   }
 
-  await respond(ws, activeSession, "Captured. Keep going or say done when finished.");
+  await respond(ws, activeSession, "I'm still here. Keep going.");
 }
 
 async function start() {
