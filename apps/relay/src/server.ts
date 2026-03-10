@@ -14,8 +14,6 @@ import {
   suggestGithubRepoNamesFromTextForOwners
 } from "@walkflow/core/lib/github";
 import { normalizePhoneE164 } from "@walkflow/core/lib/phone";
-import { generateVoiceConversationReply, VoiceAiRequiredError } from "@walkflow/core/lib/openai/conversation";
-import { classifyVoiceIntent, VoiceIntentAiRequiredError } from "@walkflow/core/lib/openai/conversation-intent";
 import { generateVoiceProposal, type VoiceProposal, VoiceProposalAiRequiredError } from "@walkflow/core/lib/openai/proposal";
 import {
   buildRelayEndSessionMessage,
@@ -208,6 +206,27 @@ function sendTokenizedText(ws: WebSocket, text: string) {
   }
 }
 
+function doneIntent(text: string) {
+  return /\b(done|finished|that'?s all|that is all|that should do it|that should do|that covers it|that covers everything|that’s it|that's it|that’s all|can you summarize|could you summarize|want to summarize|ready for a summary|ready now)\b/i.test(text);
+}
+
+function confirmIntent(text: string) {
+  return /\b(confirm|approved?|yes|yeah|yep|looks good|sounds good|that sounds good|that sounds right|that works|works for me|go ahead|ship it|let'?s do it|perfect)\b/i.test(text);
+}
+
+function rejectIntent(text: string) {
+  return /\b(reject|no|nope|change|changes|not right|not quite|try again|different|use another|wrong repo|wrong repository|pick a different repo|needs work|recheck|recheck it)\b/i.test(text);
+}
+
+function finishIntent(text: string) {
+  return /\b(done|hang up|goodbye|bye)\b/i.test(text);
+}
+
+function satisfiedGoodbyeIntent(text: string) {
+  return /\b(thanks|thank you|perfect|great|sounds good|looks good|that works|works for me)\b/i.test(text)
+    && /\b(goodbye|bye)\b/i.test(text);
+}
+
 function repoNameParts(repoName: string) {
   const segments = repoName.split("/");
   return {
@@ -245,45 +264,6 @@ function plainTextTranscriptForSession(session: SessionState) {
   return session.callerNotes.join("\n").trim();
 }
 
-async function conversationReply(
-  session: SessionState,
-  mode: Parameters<typeof generateVoiceConversationReply>[0]["mode"]
-) {
-  return generateVoiceConversationReply({
-    mode,
-    transcript: plainTextTranscriptForSession(session),
-    latestCallerMessage: session.callerNotes[session.callerNotes.length - 1] || undefined,
-    proposal: session.proposal,
-    preferredRepoName: session.preferredRepoName,
-    rejectionCount: session.rejectionCount,
-    silencePromptCount: session.silencePromptCount
-  }, {
-    allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
-  });
-}
-
-async function classifyIntentForSession(
-  session: SessionState,
-  latestCallerMessage: string
-) {
-  const phase = session.phase === "awaiting_confirmation"
-    ? "awaiting_confirmation"
-    : session.phase === "awaiting_retry_context"
-      ? "awaiting_retry_context"
-      : "collecting";
-
-  return classifyVoiceIntent({
-    phase,
-    latestCallerMessage,
-    transcript: plainTextTranscriptForSession(session),
-    proposalSummary: session.proposal?.summary,
-    repoName: session.proposal?.repoName || session.preferredRepoName,
-    rejectionCount: session.rejectionCount
-  }, {
-    allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
-  });
-}
-
 async function failClosedForVoiceAi(ws: WebSocket, session: SessionState, error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown voice AI error.";
   console.error(`[voice-ai-required][${session.callSid || "unknown-call"}] ${message}`);
@@ -299,9 +279,44 @@ async function failClosedForVoiceAi(ws: WebSocket, session: SessionState, error:
 }
 
 function isVoiceAiFailure(error: unknown) {
-  return error instanceof VoiceAiRequiredError
-    || error instanceof VoiceIntentAiRequiredError
-    || error instanceof VoiceProposalAiRequiredError;
+  return error instanceof VoiceProposalAiRequiredError;
+}
+
+function greetingText(mapped: boolean) {
+  return mapped
+    ? "I'm listening. Tell me what you want to change."
+    : "I'm here. I couldn't match this number to an account, but I can still listen.";
+}
+
+function processingText() {
+  return "Let me summarize that.";
+}
+
+function proposalText(proposal: VoiceProposal) {
+  const action = proposal.actionType === "pr" ? "pull request" : "issue";
+  return `I'd put this in ${proposal.repoName} as a ${action}: ${proposal.issueTitle}. ${proposal.summary} Please confirm or reject this summary.`;
+}
+
+function confirmationPromptText() {
+  return "Please confirm or reject this summary.";
+}
+
+function retryPromptText(preferredRepoName: string | null) {
+  return preferredRepoName
+    ? `Okay. I'll switch to ${preferredRepoName}. What should I change?`
+    : "What should I change?";
+}
+
+function approvalText() {
+  return "Approved. I'll queue the follow-up and let you go.";
+}
+
+function needsReviewText() {
+  return "Understood. I marked it for review, so nothing will run automatically.";
+}
+
+function endedWithoutConfirmationText() {
+  return "I didn't get a clear confirmation, so I saved this for review.";
 }
 
 function clearSilenceTimer(session: SessionState) {
@@ -313,8 +328,7 @@ function clearSilenceTimer(session: SessionState) {
 
 async function generateAndPresentProposal(ws: WebSocket, session: SessionState) {
   const transcript = plainTextTranscriptForSession(session);
-  const processingText = await conversationReply(session, "processing_summary");
-  await respond(ws, session, processingText, { scheduleSilence: false });
+  await respond(ws, session, processingText(), { scheduleSilence: false });
 
   const localRepos = await listUserRepoNames(session.userId);
   const githubUserRepos = await listGithubUserRepoNames(120);
@@ -349,8 +363,7 @@ async function generateAndPresentProposal(ws: WebSocket, session: SessionState) 
     await persistProposal(session.interactionId, proposal);
   }
 
-  const proposalText = await conversationReply(session, "proposal");
-  await respond(ws, session, proposalText);
+  await respond(ws, session, proposalText(proposal));
 }
 
 async function sendSilencePrompt(session: SessionState) {
@@ -369,12 +382,16 @@ async function sendSilencePrompt(session: SessionState) {
   }
 
   const mode = session.phase === "awaiting_confirmation"
-    ? "silence_confirmation"
+    ? "confirmation"
     : session.phase === "awaiting_retry_context"
-      ? "silence_retry"
-      : "silence_collecting";
+      ? "retry"
+      : "collecting";
 
-  const text = await conversationReply(session, mode);
+  const text = mode === "confirmation"
+    ? confirmationPromptText()
+    : mode === "retry"
+      ? retryPromptText(session.preferredRepoName)
+      : "I'm still here. Keep going.";
   session.silencePromptCount += 1;
   await respond(session.socket, session, text, { scheduleSilence: false });
 }
@@ -536,10 +553,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     }
     liveSessions.set(message.callSid, session);
 
-    const ackText = session.interactionId
-      ? await conversationReply(session, "welcome_mapped")
-      : await conversationReply(session, "welcome_unmapped");
-    await respond(ws, session, ackText);
+    await respond(ws, session, greetingText(Boolean(session.interactionId)), { scheduleSilence: false });
     return;
   }
 
@@ -562,7 +576,19 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     return;
   }
 
-  const classifiedIntent = await classifyIntentForSession(activeSession, message.text);
+  const classifiedIntent = activeSession.phase === "awaiting_confirmation"
+    ? satisfiedGoodbyeIntent(message.text) || confirmIntent(message.text)
+      ? "confirm"
+      : rejectIntent(message.text)
+        ? "reject"
+        : finishIntent(message.text)
+          ? "finish"
+          : "continue"
+    : doneIntent(message.text)
+      ? "summarize"
+      : finishIntent(message.text)
+        ? "finish"
+        : "continue";
 
   if (activeSession.phase === "awaiting_retry_context" && classifiedIntent === "continue") {
     activeSession.hasPendingRetryContext = true;
@@ -579,11 +605,10 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       if (activeSession.interactionId) {
         await persistInteractionState(activeSession.interactionId, { status: "approved" });
       }
-      const approvalText = await conversationReply(activeSession, "approval");
       await respondAndEnd(
         ws,
         activeSession,
-        approvalText,
+        approvalText(),
         { reason: "approved" }
       );
       if (activeSession.interactionId) {
@@ -604,7 +629,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       await respondAndEnd(
         ws,
         activeSession,
-        "I didn't get a clear confirmation, so I saved this for review.",
+        endedWithoutConfirmationText(),
         { reason: "ended_without_confirmation" }
       );
       return;
@@ -618,11 +643,10 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
         if (activeSession.interactionId) {
           await persistInteractionState(activeSession.interactionId, { status: "needs_review" });
         }
-        const reviewText = await conversationReply(activeSession, "needs_review");
         await respondAndEnd(
           ws,
           activeSession,
-          reviewText,
+          needsReviewText(),
           { reason: "needs_review" }
         );
         return;
@@ -630,19 +654,11 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
       activeSession.phase = "awaiting_retry_context";
       activeSession.hasPendingRetryContext = false;
-      if (activeSession.preferredRepoName) {
-        const retryRepoText = await conversationReply(activeSession, "retry_repo_switch");
-        await respond(ws, activeSession, retryRepoText);
-        return;
-      }
-
-      const retryClarifyText = await conversationReply(activeSession, "retry_clarify");
-      await respond(ws, activeSession, retryClarifyText);
+      await respond(ws, activeSession, retryPromptText(activeSession.preferredRepoName));
       return;
     }
 
-    const confirmationHelpText = await conversationReply(activeSession, "confirmation_help");
-    await respond(ws, activeSession, confirmationHelpText);
+    await respond(ws, activeSession, confirmationPromptText());
     return;
   }
 
@@ -672,8 +688,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
     return;
   }
 
-  const keepListeningText = await conversationReply(activeSession, "keep_listening");
-  await respond(ws, activeSession, keepListeningText);
+  await respond(ws, activeSession, "I'm still here. Keep going.", { scheduleSilence: false });
 }
 
 async function start() {
