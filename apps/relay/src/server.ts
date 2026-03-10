@@ -291,7 +291,7 @@ function isVoiceAiFailure(error: unknown) {
 
 function greetingText(mapped: boolean) {
   return mapped
-    ? "I'm listening. Tell me what you want to change."
+    ? "Hey, this is walkflow. How can I help?."
     : "I'm here. I couldn't match this number to an account, but I can still listen.";
 }
 
