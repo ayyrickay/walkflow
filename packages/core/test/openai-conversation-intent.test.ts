@@ -67,3 +67,25 @@ test("classifyVoiceIntent fallback returns confirm for approval during confirmat
     }
   }
 });
+
+test("classifyVoiceIntent fallback returns confirm for satisfied goodbye during confirmation", async () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    const intent = await classifyVoiceIntent({
+      phase: "awaiting_confirmation",
+      latestCallerMessage: "Perfect, bye.",
+      proposalSummary: "Prompt the caller after three seconds of silence.",
+      repoName: "walkflow/app"
+    }, {
+      allowDeterministicFallback: true
+    });
+
+    assert.equal(intent, "confirm");
+  } finally {
+    if (originalKey) {
+      process.env.OPENAI_API_KEY = originalKey;
+    }
+  }
+});

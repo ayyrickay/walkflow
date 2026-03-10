@@ -85,21 +85,21 @@ function normalizeReply(value: unknown): string | null {
 function fallbackConversationReply(input: VoiceConversationInput): string {
   switch (input.mode) {
     case "welcome_mapped":
-      return "I'm listening. Talk it through. If you pause, I can summarize what I have.";
+      return "I'm listening. Talk it through. After a short pause, I'll summarize it back for confirmation.";
     case "welcome_unmapped":
       return "I'm here. I couldn't match this number to an account, but I can still listen.";
     case "silence_collecting":
       return input.silencePromptCount && input.silencePromptCount > 0
-        ? "I can summarize this now if you're ready."
-        : "Want to add more detail, or should I summarize it?";
+        ? "I'm ready when you are."
+        : "I'm still here. Keep going.";
     case "silence_retry":
       return input.silencePromptCount && input.silencePromptCount > 0
         ? "I can try again with what I have."
         : "Anything else to change, or should I try again now?";
     case "silence_confirmation":
       return input.silencePromptCount && input.silencePromptCount > 0
-        ? "I can mark it approved, or send it to review."
-        : "Should I go ahead with that, or change it?";
+        ? "Please confirm or reject this summary."
+        : "Please confirm or reject this summary.";
     case "processing_summary":
       return "Let me summarize that.";
     case "proposal": {
@@ -109,7 +109,7 @@ function fallbackConversationReply(input: VoiceConversationInput): string {
       }
 
       const action = proposal.actionType === "pr" ? "pull request" : "issue";
-      return `I'd put this in ${proposal.repoName} as a ${action}: ${proposal.issueTitle}. ${proposal.summary} Go ahead, or change it?`;
+      return `I'd put this in ${proposal.repoName} as a ${action}: ${proposal.issueTitle}. ${proposal.summary} Please confirm or reject this summary.`;
     }
     case "retry_repo_switch":
       return input.preferredRepoName
@@ -122,7 +122,7 @@ function fallbackConversationReply(input: VoiceConversationInput): string {
     case "needs_review":
       return "Understood. I marked it for review, so nothing will run automatically.";
     case "confirmation_help":
-      return "Say go ahead to approve it, or tell me what to change.";
+      return "Please confirm or reject this summary.";
     case "keep_listening":
       return "I'm here. Keep going when you're ready.";
     default:
@@ -200,8 +200,10 @@ export async function generateVoiceConversationReply(
                   "Use one or two short sentences.",
                   "Prefer fewer than 24 spoken words unless reading a proposal.",
                   "Do not mention internal systems, JSON, schemas, or hidden reasoning.",
-                  "For silence prompts, gently ask whether to add detail or summarize.",
-                  "For proposal mode, speak the repo, action, title, summary, then ask for approval or changes."
+                  "Before any caller content exists, a silence prompt can briefly re-engage the caller.",
+                  "Once caller content exists, the flow should move toward a summary and confirmation, not open-ended brainstorming.",
+                  "For proposal mode, speak the repo, action, title, summary, then end with: Please confirm or reject this summary.",
+                  "For confirmation help and confirmation silence prompts, say: Please confirm or reject this summary."
                 ].join(" ")
               }
             ]

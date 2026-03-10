@@ -61,6 +61,11 @@ Never auto-complete uncertain interactions.
 - Add tests for non-trivial routing, matching, and state-machine logic
 - Use clear UI labels (repo/issue title), avoid raw internal IDs except debug views
 
+## Voice Relay Scenarios
+- Keep the live call flow aligned with the scenario asset in `docs/voice-relay-scenarios.md`.
+- Treat those scenarios as the baseline for reasoning about silence handling, summary wording, and confirm/reject behavior.
+- If relay behavior changes, update that scenario asset in the same change so the intended call shape stays explicit.
+
 ## Sessions
 | Session | Label | Resume Command |
 | --- | --- | --- |

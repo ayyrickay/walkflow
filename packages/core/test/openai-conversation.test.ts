@@ -36,7 +36,7 @@ test("generateVoiceConversationReply falls back to concise silence prompt withou
       allowDeterministicFallback: true
     });
 
-    assert.match(reply, /summarize|detail/i);
+    assert.match(reply, /still here|ready/i);
   } finally {
     if (originalKey) {
       process.env.OPENAI_API_KEY = originalKey;
@@ -63,7 +63,7 @@ test("generateVoiceConversationReply falls back to proposal phrasing without API
 
     assert.match(reply, /walkflow\/app/i);
     assert.match(reply, /pull request/i);
-    assert.match(reply, /Go ahead, or change it\?/i);
+    assert.match(reply, /Please confirm or reject this summary\./i);
   } finally {
     if (originalKey) {
       process.env.OPENAI_API_KEY = originalKey;

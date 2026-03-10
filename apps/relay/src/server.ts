@@ -42,11 +42,12 @@ type SessionState = {
   preferredRepoName: string | null;
   silenceTimer: NodeJS.Timeout | null;
   silencePromptCount: number;
+  hasPendingRetryContext: boolean;
 };
 
 const liveSessions = new Map<string, SessionState>();
 const socketSessions = new WeakMap<WebSocket, SessionState>();
-const SILENCE_TIMEOUT_MS = 3_000;
+const SILENCE_TIMEOUT_MS = Number(process.env.WALKFLOW_VOICE_SILENCE_MS || 2_000);
 const ALLOW_DETERMINISTIC_VOICE_FALLBACK = process.env.WALKFLOW_ALLOW_DETERMINISTIC_VOICE_FALLBACK === "true";
 
 function createId() {
@@ -73,7 +74,8 @@ function getOrCreateSession(ws: WebSocket): SessionState {
     availableRepoNames: [],
     preferredRepoName: null,
     silenceTimer: null,
-    silencePromptCount: 0
+    silencePromptCount: 0,
+    hasPendingRetryContext: false
   };
   socketSessions.set(ws, created);
   return created;
@@ -309,8 +311,60 @@ function clearSilenceTimer(session: SessionState) {
   }
 }
 
+async function generateAndPresentProposal(ws: WebSocket, session: SessionState) {
+  const transcript = plainTextTranscriptForSession(session);
+  const processingText = await conversationReply(session, "processing_summary");
+  await respond(ws, session, processingText, { scheduleSilence: false });
+
+  const localRepos = await listUserRepoNames(session.userId);
+  const githubUserRepos = await listGithubUserRepoNames(120);
+  const githubUserRepoSet = new Set(githubUserRepos.map((repo) => normalizeRepoName(repo)));
+  const localReposFiltered = githubUserRepoSet.size > 0
+    ? localRepos.filter((repo) => githubUserRepoSet.has(normalizeRepoName(repo)))
+    : localRepos;
+
+  const githubOwners = ownersFromRepoNames(githubUserRepos);
+  const githubSuggestedRepos = githubOwners.length > 0
+    ? await suggestGithubRepoNamesFromTextForOwners(transcript, githubOwners, 8)
+    : await suggestGithubRepoNamesFromText(transcript, 8);
+
+  const availableRepos = mergeUniqueRepoNames(
+    mergeUniqueRepoNames(localReposFiltered, githubUserRepos),
+    githubSuggestedRepos
+  ).slice(0, 24);
+  session.availableRepoNames = availableRepos;
+
+  const generatedProposal = await generateVoiceProposal(transcript, availableRepos, {
+    allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
+  });
+  const proposal = session.preferredRepoName
+    ? { ...generatedProposal, repoName: session.preferredRepoName }
+    : generatedProposal;
+
+  session.proposal = proposal;
+  session.phase = "awaiting_confirmation";
+  session.preferredRepoName = null;
+
+  if (session.interactionId) {
+    await persistProposal(session.interactionId, proposal);
+  }
+
+  const proposalText = await conversationReply(session, "proposal");
+  await respond(ws, session, proposalText);
+}
+
 async function sendSilencePrompt(session: SessionState) {
   if (!session.socket || session.phase === "closed") {
+    return;
+  }
+
+  if (
+    (
+      (session.phase === "collecting" && session.callerNotes.length > 0)
+      || (session.phase === "awaiting_retry_context" && session.hasPendingRetryContext)
+    )
+  ) {
+    await generateAndPresentProposal(session.socket, session);
     return;
   }
 
@@ -510,12 +564,16 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
   const classifiedIntent = await classifyIntentForSession(activeSession, message.text);
 
+  if (activeSession.phase === "awaiting_retry_context" && classifiedIntent === "continue") {
+    activeSession.hasPendingRetryContext = true;
+  }
+
   if (activeSession.phase === "awaiting_confirmation") {
     if (repoOverride && repoOverride !== activeSession.proposal?.repoName) {
       activeSession.preferredRepoName = repoOverride;
     }
 
-    if (classifiedIntent === "confirm" || classifiedIntent === "finish") {
+    if (classifiedIntent === "confirm") {
       activeSession.phase = "closed";
       clearSilenceTimer(activeSession);
       if (activeSession.interactionId) {
@@ -534,6 +592,21 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
           preferPullRequest: activeSession.proposal?.actionType === "pr"
         });
       }
+      return;
+    }
+
+    if (classifiedIntent === "finish") {
+      activeSession.phase = "closed";
+      clearSilenceTimer(activeSession);
+      if (activeSession.interactionId) {
+        await persistInteractionState(activeSession.interactionId, { status: "needs_review" });
+      }
+      await respondAndEnd(
+        ws,
+        activeSession,
+        "I didn't get a clear confirmation, so I saved this for review.",
+        { reason: "ended_without_confirmation" }
+      );
       return;
     }
 
@@ -556,6 +629,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       }
 
       activeSession.phase = "awaiting_retry_context";
+      activeSession.hasPendingRetryContext = false;
       if (activeSession.preferredRepoName) {
         const retryRepoText = await conversationReply(activeSession, "retry_repo_switch");
         await respond(ws, activeSession, retryRepoText);
@@ -593,42 +667,8 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
       return;
     }
 
-    const transcript = plainTextTranscriptForSession(activeSession);
-    const processingText = await conversationReply(activeSession, "processing_summary");
-    await respond(ws, activeSession, processingText, { scheduleSilence: false });
-    const localRepos = await listUserRepoNames(activeSession.userId);
-    const githubUserRepos = await listGithubUserRepoNames(120);
-    const githubUserRepoSet = new Set(githubUserRepos.map((repo) => normalizeRepoName(repo)));
-    const localReposFiltered = githubUserRepoSet.size > 0
-      ? localRepos.filter((repo) => githubUserRepoSet.has(normalizeRepoName(repo)))
-      : localRepos;
-
-    const githubOwners = ownersFromRepoNames(githubUserRepos);
-    const githubSuggestedRepos = githubOwners.length > 0
-      ? await suggestGithubRepoNamesFromTextForOwners(transcript, githubOwners, 8)
-      : await suggestGithubRepoNamesFromText(transcript, 8);
-
-    const availableRepos = mergeUniqueRepoNames(
-      mergeUniqueRepoNames(localReposFiltered, githubUserRepos),
-      githubSuggestedRepos
-    ).slice(0, 24);
-    activeSession.availableRepoNames = availableRepos;
-    const generatedProposal = await generateVoiceProposal(transcript, availableRepos, {
-      allowDeterministicFallback: ALLOW_DETERMINISTIC_VOICE_FALLBACK
-    });
-    const proposal = activeSession.preferredRepoName
-      ? { ...generatedProposal, repoName: activeSession.preferredRepoName }
-      : generatedProposal;
-    activeSession.proposal = proposal;
-    activeSession.phase = "awaiting_confirmation";
-    activeSession.preferredRepoName = null;
-
-    if (activeSession.interactionId) {
-      await persistProposal(activeSession.interactionId, proposal);
-    }
-
-    const proposalText = await conversationReply(activeSession, "proposal");
-    await respond(ws, activeSession, proposalText);
+    activeSession.hasPendingRetryContext = false;
+    await generateAndPresentProposal(ws, activeSession);
     return;
   }
 

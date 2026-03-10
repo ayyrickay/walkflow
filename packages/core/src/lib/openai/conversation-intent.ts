@@ -79,11 +79,19 @@ function finishIntent(text: string) {
   return /\b(done|hang up|goodbye|bye)\b/i.test(text);
 }
 
+function satisfiedGoodbyeIntent(text: string) {
+  return /\b(thanks|thank you|perfect|great|sounds good|looks good|that works|works for me)\b/i.test(text)
+    && /\b(goodbye|bye)\b/i.test(text);
+}
+
 function fallbackIntent(input: VoiceIntentInput): VoiceIntent {
   const text = input.latestCallerMessage;
 
   if (input.phase === "awaiting_confirmation") {
     if (confirmIntent(text)) {
+      return "confirm";
+    }
+    if (satisfiedGoodbyeIntent(text)) {
       return "confirm";
     }
     if (rejectIntent(text)) {
@@ -175,6 +183,7 @@ export async function classifyVoiceIntent(
                   "Return only one intent.",
                   "Use summarize when the caller sounds done and wants a summary or proposal.",
                   "Use confirm only for clear approval of the proposed action.",
+                  "If the caller has heard the summary and says a satisfied goodbye like 'perfect, bye', treat that as confirm.",
                   "Use reject for requests to change or retry the proposal.",
                   "Use finish when the caller is explicitly ending the call.",
                   "Otherwise use continue."
