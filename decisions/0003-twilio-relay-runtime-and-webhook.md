@@ -29,7 +29,7 @@ This reduces ops overhead but can introduce lifecycle and connection constraints
 
 ## Consequences
 
-- Local development requires two running processes (`npm run dev` and `npm run relay:dev`).
+- Local development requires two running processes (`npm run dev` and `npm run dev:relay`).
 - Twilio number configuration must point to a publicly reachable `/api/twilio/voice` endpoint.
 - Production deployments must use infrastructure that supports durable websocket connections.
 - Readme can stay short and demo-focused while deep relay requirements live in this decision record.

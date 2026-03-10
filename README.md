@@ -85,7 +85,13 @@ npm run dev
 Terminal B:
 
 ```bash
-npm run relay:dev
+npm run dev:relay
+```
+
+Or run both with Turbo:
+
+```bash
+npm run dev:all
 ```
 
 ### 6) Expose the relay publicly
@@ -117,7 +123,26 @@ Then call in to your Twilio number to test Walkflow!
 npm test
 npm run lint
 npm run typecheck
+npm run test:all
 ```
+
+## Render Deployment
+
+This repo is now split into workspace apps and packages:
+
+- `apps/web` for the Next.js dashboard and API routes
+- `apps/relay` for the persistent Twilio relay runtime
+- `packages/core` for shared voice, GitHub, and transcript logic
+- `packages/db` for database schema, client, and bootstrap scripts
+
+For Render, the simplest setup is two services from the same repo root:
+
+- Web service build: `npm ci && npm run build:web`
+- Web service start: `npm run start:web`
+- Relay service build: `npm ci && npm run build:relay`
+- Relay service start: `npm run start:relay`
+
+A starter Render blueprint is included at [`render.yaml`](./render.yaml).
 
 ## Implementation Notes
 
