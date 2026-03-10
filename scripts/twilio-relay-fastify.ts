@@ -446,7 +446,7 @@ async function onSocketMessage(ws: WebSocket, rawData: RawData) {
 
 async function start() {
   const host = process.env.TWILIO_RELAY_HOST || "0.0.0.0";
-  const port = Number(process.env.TWILIO_RELAY_PORT || 8081);
+  const port = Number(process.env.TWILIO_RELAY_PORT || process.env.PORT || 8081);
 
   const app = Fastify({ logger: true, trustProxy: true });
   await app.register(websocket);

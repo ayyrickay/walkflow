@@ -42,6 +42,7 @@ cp .env.example .env
 
 Then fill in at least:
 
+- `DATABASE_URL` (shared Postgres connection string)
 - `OPENAI_API_KEY`
 - `AUTH_SECRET`
 - `GITHUB_PROVIDER=rest` (default) and `GITHUB_READ_TOKEN`
@@ -49,21 +50,29 @@ Then fill in at least:
 
 Optional but useful:
 
+- `DATABASE_SSL=true` if your Postgres provider requires TLS
 - `GITHUB_WRITE_TOKEN` for issue/PR creation
 - `TWILIO_TEST_CALLER_E164` and `TWILIO_TEST_USER_EMAIL` for deterministic caller mapping during local tests
 
-### 3) Create the SQLite database
+If you have an older `.env` from a SQLite-based branch, replace any `DATABASE_URL=file:./walkflow.sqlite` value. This app now expects Postgres for local setup.
+
+### 3) Create an empty local database
+
+Use any Postgres instance you want, then point `DATABASE_URL` at an empty database.
+
+For the default local connection shown in `.env.example`, that is:
 
 ```bash
-sqlite3 walkflow.sqlite < drizzle/0001_init.sql
-sqlite3 walkflow.sqlite < drizzle/0002_interactions.sql
+createdb walkflow
 ```
 
-### 4) Seed demo data and login
+### 4) Set up and seed the demo database
 
 ```bash
-npm run seed
+npm run db:setup
 ```
+
+This applies the current schema, seeds demo data, and enables demo fallback mode so the app is ready to explore.
 
 ### 5) Run the app and relay (two terminals)
 
