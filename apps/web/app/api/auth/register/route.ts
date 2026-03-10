@@ -62,5 +62,5 @@ export async function POST(request: Request) {
   const token = await signSessionToken(id, payload.data.email);
   await setSessionCookie(token);
 
-  return NextResponse.redirect(new URL("/dashboard", request.url));
+  return NextResponse.json({ ok: true });
 }

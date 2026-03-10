@@ -36,7 +36,8 @@ export function AuthScreen() {
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        body: formData
+        body: formData,
+        redirect: "error"
       });
 
       if (response.ok) {
@@ -54,7 +55,8 @@ export function AuthScreen() {
       }
 
       setErrorMessage(message);
-    } catch {
+    } catch (error) {
+      console.error(`${mode} request failed`, error);
       setErrorMessage("Network error. Check your connection and try again.");
     } finally {
       setSubmitting(null);
